@@ -62,6 +62,7 @@ class Document(Base):
     workspace_id = Column(Uuid, ForeignKey("workspaces.id"), nullable=False)
 
     filename = Column(String(255), nullable=False)
+    s3_object_key = Column(String(1024), nullable=False)
     status = Column(Enum(DocumentStatus), default=DocumentStatus.UPLOADING, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)

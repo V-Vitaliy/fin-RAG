@@ -1,12 +1,12 @@
 import uuid
 from typing import List, Optional
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.domain import User, Workspace, Document, DocumentStatus, WorkspaceType
 
 
 class WorkspaceRepository:
-    """Async repository for workspace management."""
+    """Repository for workspace management."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -15,7 +15,7 @@ class WorkspaceRepository:
         """Creates a new workspace."""
         db_workspace = Workspace(name=name, type=ws_type)
         self.db.add(db_workspace)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(db_workspace)
         return db_workspace
 
@@ -28,7 +28,7 @@ class WorkspaceRepository:
 
 
 class UserRepository:
-    """Async repository for user management."""
+    """Repository for user management."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -52,29 +52,37 @@ class UserRepository:
         db_user = User(
             email=email,
             password_hash=password_hash,
-            workspace_id=workspace_id
+            workspace_id=workspace_id,
         )
         self.db.add(db_user)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(db_user)
         return db_user
 
 
 class DocumentRepository:
-    """Async repository for document metadata management."""
+    """Repository for document metadata management."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create_document(self, workspace_id: uuid.UUID, filename: str) -> Document:
+    async def create_document(
+        self,
+        workspace_id: uuid.UUID,
+        filename: str,
+        s3_object_key: str,
+        document_id: uuid.UUID | None = None,
+    ) -> Document:
         """Creates a new document record with UPLOADING status."""
         db_doc = Document(
+            id=document_id or uuid.uuid4(),
             workspace_id=workspace_id,
             filename=filename,
-            status=DocumentStatus.UPLOADING
+            s3_object_key=s3_object_key,
+            status=DocumentStatus.UPLOADING,
         )
         self.db.add(db_doc)
-        await self.db.commit()
+        await self.db.flush()
         await self.db.refresh(db_doc)
         return db_doc
 
@@ -84,10 +92,12 @@ class DocumentRepository:
             select(Document).where(Document.id == document_id)
         )
         db_doc = result.scalars().first()
+
         if db_doc:
             db_doc.status = status
-            await self.db.commit()
+            await self.db.flush()
             await self.db.refresh(db_doc)
+
         return db_doc
 
     async def get_by_workspace(self, workspace_id: uuid.UUID) -> List[Document]:
@@ -103,8 +113,10 @@ class DocumentRepository:
             select(Document).where(Document.id == document_id)
         )
         db_doc = result.scalars().first()
+
         if db_doc:
             await self.db.delete(db_doc)
-            await self.db.commit()
+            await self.db.flush()
             return db_doc
+
         return None
