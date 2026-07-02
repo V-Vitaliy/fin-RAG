@@ -1,7 +1,7 @@
 import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Enum, ForeignKey, DateTime, Uuid
+from sqlalchemy import Column, String, Enum, ForeignKey, DateTime, Uuid, Boolean, Integer
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -62,7 +62,18 @@ class Document(Base):
     workspace_id = Column(Uuid, ForeignKey("workspaces.id"), nullable=False)
 
     filename = Column(String(255), nullable=False)
+    s3_object_key = Column(String(1024), nullable=False)
     status = Column(Enum(DocumentStatus), default=DocumentStatus.UPLOADING, nullable=False)
+
+    content_hash = Column(String(64), nullable=True, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    indexed_at = Column(DateTime, nullable=True)
+    failure_reason = Column(String(2048), nullable=True)
+
+    ingestion_version = Column(Integer, default=1, nullable=False)
+    qdrant_points_count = Column(Integer, nullable=True)
+    duckdb_tables_count = Column(Integer, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

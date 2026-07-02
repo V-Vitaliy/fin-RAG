@@ -1,7 +1,7 @@
 from qdrant_client import AsyncQdrantClient
 from app.core.config import settings
 
-def get_qdrant_client() -> AsyncQdrantClient:
+def build_qdrant_client() -> AsyncQdrantClient:
     """
     Initializes and returns the async Qdrant client.
     """

@@ -3,6 +3,7 @@ uvicorn[standard]
 python-multipart
 sqlalchemy
 psycopg2-binary
+asyncpg
 qdrant-client
 docling
 openai
@@ -18,3 +19,8 @@ pytest
 pytest-asyncio
 httpx
 alembic
+aioboto3
+fastembed
+types-aiobotocore-s3
+duckdb
+tiktoken
