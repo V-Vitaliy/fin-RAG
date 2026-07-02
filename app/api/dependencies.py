@@ -9,6 +9,7 @@ from app.repositories.uow import SqlAlchemyUnitOfWork
 from app.core.security import PasswordHasher
 from app.use_cases.auth import AuthUseCase
 from app.use_cases.documents import DocumentUseCase
+from app.services.jobs.ingestion_queue import IngestionQueue
 
 
 async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -38,9 +39,12 @@ def get_auth_use_case(request: Request) -> AuthUseCase:
         password_hasher=PasswordHasher(),
     )
 
+def get_ingestion_queue(request: Request) -> IngestionQueue:
+    return request.app.state.ingestion_queue
 
 def get_document_use_case(request: Request) -> DocumentUseCase:
     return DocumentUseCase(
         uow=SqlAlchemyUnitOfWork(request.app.state.db_sessionmaker),
         s3_repository=request.app.state.s3_repo,
+        ingestion_queue=request.app.state.ingestion_queue,
     )

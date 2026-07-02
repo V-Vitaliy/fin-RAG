@@ -22,3 +22,5 @@ alembic
 aioboto3
 fastembed
 types-aiobotocore-s3
+duckdb
+tiktoken
