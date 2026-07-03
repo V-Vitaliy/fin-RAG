@@ -67,6 +67,17 @@ class RetrieveDocumentsUseCase:
             document_ids=[self._document_id(document) for document in documents],
         )
 
+    async def resolve_access(
+        self,
+        *,
+        workspace_id: UUID,
+        requested_document_ids: list[UUID | str] | None = None,
+    ) -> RetrievalDocumentAccess:
+        return await self._resolve_access(
+            workspace_id=workspace_id,
+            requested_document_ids=requested_document_ids,
+        )
+
     async def search(
         self,
         *,

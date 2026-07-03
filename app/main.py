@@ -24,8 +24,11 @@ from app.infrastructure.rag import (build_chunker,
                                     build_sparse_embedder,
                                     build_reranker
                                     )
+from app.infrastructure.openai import build_openai_client
+from app.infrastructure.agent import build_agent_use_case
 from app.services.retrieval.hybrid import AgentHybridRetriever
 from app.use_cases.retrieval import RetrieveDocumentsUseCase
+from app.api.routes.router import api_router
 
 
 
@@ -37,6 +40,10 @@ async def lifespan(app: FastAPI):
         db_sessionmaker = build_sessionmaker(postgres_engine)
         uow_factory = lambda: SqlAlchemyUnitOfWork(db_sessionmaker)
         stack.push_async_callback(postgres_engine.dispose)
+
+        openai_client = build_openai_client()
+        stack.push_async_callback(openai_client.close)
+
 
         s3_client = await stack.enter_async_context(
             s3session.client(
@@ -95,6 +102,11 @@ async def lifespan(app: FastAPI):
             sparse_embedder=sparse_embedder,
         )
 
+        agent_use_case = build_agent_use_case(
+            openai_client=openai_client,
+            retrieval_use_case=retrieval_use_case,
+        )
+
         ingestion_queue = IngestionQueue(
             maxsize=int(getattr(settings, "RAG_INGESTION_QUEUE_MAXSIZE", 0))
         )
@@ -135,6 +147,8 @@ async def lifespan(app: FastAPI):
         app.state.reranker = reranker
         app.state.retriever = retriever
         app.state.retrieval_use_case = retrieval_use_case
+        app.state.openai_client = openai_client
+        app.state.agent_use_case = agent_use_case
 
         yield
 
@@ -153,7 +167,4 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/health", tags=["health"])
-async def health_check():
-    return {"status": "ok"}
+app.include_router(api_router)

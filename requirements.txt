@@ -11,7 +11,8 @@ sentence-transformers
 torch
 PyJWT
 passlib[bcrypt]
-pydantic
+bcrypt==4.0.1
+pydantic[email]
 pydantic-settings
 python-dotenv
 chainlit
@@ -24,3 +25,4 @@ fastembed
 types-aiobotocore-s3
 duckdb
 tiktoken
+python-jose[cryptography]

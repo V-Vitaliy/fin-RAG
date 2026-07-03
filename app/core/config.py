@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     RAG_INGESTION_CONCURRENCY: int = 1
     RAG_THREAD_POOL_WORKERS: int = 8
 
+    # Agent
+    RAG_AGENT_MODEL: str = "gpt-4o-mini"
+    RAG_AGENT_MAX_TOOL_TURNS: int = 15
+    RAG_AGENT_MAX_TOKENS: int = 4096
+    RAG_AGENT_TEMPERATURE: float = 0.0
+    RAG_AGENT_TRACE_PATH: str | None = "agent_traces.jsonl"
+    RAG_AGENT_MAX_TOOL_OUTPUT_CHARS: int = 12000
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
