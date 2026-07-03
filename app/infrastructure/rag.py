@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from openai import OpenAI
+import logging
 
 from app.core.config import settings
 from app.services.ingestion.chunker import ChunkerConfig, HierarchicalChunker
-from app.services.rag.embeddings import BGEDenseEmbedder, OpenAIDenseEmbedder, SparseEmbedder
+from app.services.retrieval.embeddings import BGEDenseEmbedder, OpenAIDenseEmbedder, SparseEmbedder
+from app.services.retrieval.reranker import CrossEncoderReranker, select_reranker
+
+logger = logging.getLogger(__name__)
 
 
 def build_dense_embedder():
@@ -48,4 +52,31 @@ def build_chunker() -> HierarchicalChunker:
             tokenizer_name=tokenizer_name,
             bm25_strip_context=True,
         )
+    )
+
+def build_reranker():
+    selection = select_reranker(
+        use_reranker=settings.RAG_USE_RERANKER,
+        mode=settings.RAG_RERANKER_MODE,
+        cpu_model=settings.RAG_CPU_RERANKER_MODEL,
+        gpu_model=settings.RAG_GPU_RERANKER_MODEL,
+    )
+
+    logger.info(
+        "Reranker selection: enabled=%s mode=%s model=%s device=%s reason=%s",
+        selection.enabled,
+        selection.mode,
+        selection.model_name,
+        selection.device,
+        selection.reason,
+    )
+
+    if not selection.enabled:
+        return None
+
+    return CrossEncoderReranker(
+        model_name=selection.model_name,
+        device=selection.device,
+        max_length=settings.RAG_RERANKER_MAX_LENGTH,
+        batch_size=settings.RAG_RERANKER_BATCH_SIZE,
     )

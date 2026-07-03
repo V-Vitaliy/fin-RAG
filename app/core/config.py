@@ -61,10 +61,12 @@ class Settings(BaseSettings):
     RAG_FUSION_MULTIPLIER: int = 3
 
     # Reranker
+    RAG_USE_RERANKER: bool = True
     RAG_RERANKER_MODE: str = "auto"  # off | cpu_light | gpu_heavy | auto
     RAG_CPU_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     RAG_GPU_RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
     RAG_RERANKER_MAX_LENGTH: int = 1024
+    RAG_RERANKER_BATCH_SIZE: int = 16
 
     # Runtime
     RAG_INGESTION_CONCURRENCY: int = 1

@@ -18,8 +18,6 @@ class VectorIndexRepository:
     - payload index creation
     - document-scoped vector deletion
     - point upsert/count
-
-    Retrieval ranking logic stays in services/rag/retrieval.py.
     """
 
     def __init__(self, client: AsyncQdrantClient, collection_name: str):
@@ -103,6 +101,7 @@ class VectorIndexRepository:
             "chunk_index": models.PayloadSchemaType.INTEGER,
             "content_hash": models.PayloadSchemaType.KEYWORD,
             "ingestion_version": models.PayloadSchemaType.INTEGER,
+            "local_chunk_index": models.PayloadSchemaType.INTEGER,
         }
 
         for field_name, field_schema in index_fields.items():
@@ -148,3 +147,121 @@ class VectorIndexRepository:
             exact=True,
         )
         return int(result.count)
+
+    async def scroll_text_neighbors(
+        self,
+        *,
+        document_id: str,
+        center_index: int,
+        window: int = 1,
+        limit: int = 3,
+    ) -> list:
+        low = max(0, int(center_index) - int(window))
+        high = int(center_index) + int(window)
+
+        qdrant_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchValue(value=str(document_id)),
+                ),
+                models.FieldCondition(
+                    key="is_table_stub",
+                    match=models.MatchValue(value=False),
+                ),
+                models.FieldCondition(
+                    key="local_chunk_index",
+                    range=models.Range(gte=low, lte=high),
+                ),
+            ]
+        )
+
+        points, _ = await self._client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=qdrant_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        return list(points or [])
+
+    async def hybrid_search(
+        self,
+        *,
+        dense_vector: list[float],
+        sparse_indices: list[int],
+        sparse_values: list[float],
+        allowed_document_ids: list[str],
+        limit: int,
+        prefetch_limit: int,
+        only_table_stubs: bool = False,
+        boost_table_stubs: bool = False,
+    ) -> list:
+        document_ids = [str(document_id) for document_id in allowed_document_ids if document_id]
+
+        if not document_ids:
+            return []
+
+        must_conditions = [
+            models.FieldCondition(
+                key="document_id",
+                match=models.MatchAny(any=document_ids),
+            )
+        ]
+
+        should_conditions = []
+
+        if only_table_stubs:
+            must_conditions.extend(
+                [
+                    models.FieldCondition(
+                        key="is_table_stub",
+                        match=models.MatchValue(value=True),
+                    ),
+                    models.FieldCondition(
+                        key="source_type",
+                        match=models.MatchValue(value="table_stub"),
+                    ),
+                ]
+            )
+        elif boost_table_stubs:
+            should_conditions.append(
+                models.FieldCondition(
+                    key="is_table_stub",
+                    match=models.MatchValue(value=True),
+                )
+            )
+
+        qdrant_filter = models.Filter(
+            must=must_conditions,
+            should=should_conditions or None,
+        )
+
+        response = await self._client.query_points(
+            collection_name=self.collection_name,
+            prefetch=[
+                models.Prefetch(
+                    query=dense_vector,
+                    using="dense",
+                    filter=qdrant_filter,
+                    limit=prefetch_limit,
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(
+                        indices=sparse_indices,
+                        values=sparse_values,
+                    ),
+                    using="bm25",
+                    filter=qdrant_filter,
+                    limit=prefetch_limit,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            query_filter=qdrant_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        return list(response.points or [])
