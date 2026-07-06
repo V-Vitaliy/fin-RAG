@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
 from app.models.domain import WorkspaceType, UserRole, DocumentStatus
@@ -17,6 +17,15 @@ class TokenPayload(BaseModel):
     sub: Optional[str] = None
     workspace_id: Optional[UUID] = None
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    workspace_name: str | None = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
 
 # WORKSPACE SCHEMAS
 class WorkspaceCreate(BaseModel):
@@ -67,7 +76,7 @@ class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# RAG QUERY SCHEMAS
+# RAG SCHEMAS
 class Citation(BaseModel):
     """Schema for a single citation grounding the LLM answer."""
     doc_name: str
@@ -84,3 +93,49 @@ class QueryResponse(BaseModel):
     """Schema for the RAG system's answer, including citations."""
     answer: str
     citations: List[Citation] = []
+
+
+class AgentToolTraceResponse(BaseModel):
+    name: str
+    arguments: dict[str, Any]
+    result_preview: str
+    ok: bool = True
+
+
+class RagAskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    document_ids: list[UUID] | None = None
+
+
+class RagAskResponse(BaseModel):
+    answer: str
+    tool_calls: list[AgentToolTraceResponse] = []
+
+
+class SearchTextRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    document_ids: list[UUID] | None = None
+    top_k: int = Field(default=8, ge=1, le=30)
+    expand_neighbors: bool = True
+    neighbor_window: int = Field(default=1, ge=0, le=3)
+    query_rewrites: list[str] | None = None
+
+
+class SearchTextResponse(BaseModel):
+    text: str
+
+
+class SearchTablesRequest(BaseModel):
+    concept: str = Field(..., min_length=1)
+    document_ids: list[UUID] | None = None
+    top_k: int = Field(default=8, ge=1, le=30)
+    concept_rewrites: list[str] | None = None
+
+
+class SearchTablesResponse(BaseModel):
+    text: str
+
+
+class AgentStreamEvent(BaseModel):
+    event: str
+    data: dict[str, Any]

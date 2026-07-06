@@ -61,14 +61,24 @@ class Settings(BaseSettings):
     RAG_FUSION_MULTIPLIER: int = 3
 
     # Reranker
+    RAG_USE_RERANKER: bool = True
     RAG_RERANKER_MODE: str = "auto"  # off | cpu_light | gpu_heavy | auto
     RAG_CPU_RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     RAG_GPU_RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
     RAG_RERANKER_MAX_LENGTH: int = 1024
+    RAG_RERANKER_BATCH_SIZE: int = 16
 
     # Runtime
     RAG_INGESTION_CONCURRENCY: int = 1
     RAG_THREAD_POOL_WORKERS: int = 8
+
+    # Agent
+    RAG_AGENT_MODEL: str = "gpt-4o-mini"
+    RAG_AGENT_MAX_TOOL_TURNS: int = 15
+    RAG_AGENT_MAX_TOKENS: int = 4096
+    RAG_AGENT_TEMPERATURE: float = 0.0
+    RAG_AGENT_TRACE_PATH: str | None = "agent_traces.jsonl"
+    RAG_AGENT_MAX_TOOL_OUTPUT_CHARS: int = 12000
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -11,8 +11,10 @@ class FakeAsyncQdrantClient:
         self.deleted = None
         self.counted = None
         self.upserted = None
+        self.queried = None
         self.collection_exists_called = None
         self.created_collection = None
+        self.scrolled = None
         self.created_indexes = []
 
     async def collection_exists(self, collection_name):
@@ -38,6 +40,18 @@ class FakeAsyncQdrantClient:
             count = 7
 
         return CountResult()
+
+    async def query_points(self, **kwargs):
+        self.queried = kwargs
+
+        class QueryResult:
+            points = []
+
+        return QueryResult()
+
+    async def scroll(self, **kwargs):
+        self.scrolled = kwargs
+        return [], None
 
 
 def _extract_document_id_from_filter(qdrant_filter: models.Filter) -> str:
@@ -118,3 +132,136 @@ def test_allowed_documents_filter_uses_match_any_document_ids():
 
     assert condition.key == "document_id"
     assert condition.match.any == [str(doc_a), str(doc_b)]
+
+@pytest.mark.asyncio
+async def test_hybrid_search_skips_empty_allowed_documents():
+    client = FakeAsyncQdrantClient()
+    repo = VectorIndexRepository(client=client, collection_name="finance_documents")
+
+    result = await repo.hybrid_search(
+        dense_vector=[0.1, 0.2],
+        sparse_indices=[1, 2],
+        sparse_values=[0.5, 0.8],
+        allowed_document_ids=[],
+        limit=5,
+        prefetch_limit=10,
+    )
+
+    assert result == []
+    assert client.queried is None
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_filters_by_allowed_document_ids():
+    client = FakeAsyncQdrantClient()
+    repo = VectorIndexRepository(client=client, collection_name="finance_documents")
+
+    await repo.hybrid_search(
+        dense_vector=[0.1, 0.2],
+        sparse_indices=[1, 2],
+        sparse_values=[0.5, 0.8],
+        allowed_document_ids=["doc-1", "doc-2"],
+        limit=5,
+        prefetch_limit=10,
+    )
+
+    assert client.queried["collection_name"] == "finance_documents"
+    assert client.queried["limit"] == 5
+    assert client.queried["with_payload"] is True
+    assert client.queried["with_vectors"] is False
+
+    qdrant_filter = client.queried["query_filter"]
+    condition = qdrant_filter.must[0]
+
+    assert condition.key == "document_id"
+    assert condition.match.any == ["doc-1", "doc-2"]
+
+    prefetch = client.queried["prefetch"]
+
+    assert len(prefetch) == 2
+    assert prefetch[0].using == "dense"
+    assert prefetch[0].limit == 10
+    assert prefetch[1].using == "bm25"
+    assert prefetch[1].limit == 10
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_filters_table_stubs_when_requested():
+    client = FakeAsyncQdrantClient()
+    repo = VectorIndexRepository(client=client, collection_name="finance_documents")
+
+    await repo.hybrid_search(
+        dense_vector=[0.1, 0.2],
+        sparse_indices=[1, 2],
+        sparse_values=[0.5, 0.8],
+        allowed_document_ids=["doc-1"],
+        limit=5,
+        prefetch_limit=10,
+        only_table_stubs=True,
+    )
+
+    qdrant_filter = client.queried["query_filter"]
+    conditions_by_key = {condition.key: condition for condition in qdrant_filter.must}
+
+    assert conditions_by_key["document_id"].match.any == ["doc-1"]
+    assert conditions_by_key["is_table_stub"].match.value is True
+    assert conditions_by_key["source_type"].match.value == "table_stub"
+
+@pytest.mark.asyncio
+async def test_scroll_text_neighbors_filters_by_document_id_and_local_chunk_index():
+    client = FakeAsyncQdrantClient()
+    repo = VectorIndexRepository(client=client, collection_name="finance_documents")
+
+    result = await repo.scroll_text_neighbors(
+        document_id="doc-1",
+        center_index=5,
+        window=1,
+        limit=3,
+    )
+
+    assert result == []
+    assert client.scrolled["collection_name"] == "finance_documents"
+    assert client.scrolled["limit"] == 3
+    assert client.scrolled["with_payload"] is True
+    assert client.scrolled["with_vectors"] is False
+
+    qdrant_filter = client.scrolled["scroll_filter"]
+    conditions_by_key = {condition.key: condition for condition in qdrant_filter.must}
+
+    assert conditions_by_key["document_id"].match.value == "doc-1"
+    assert conditions_by_key["is_table_stub"].match.value is False
+    assert conditions_by_key["local_chunk_index"].range.gte == 4
+    assert conditions_by_key["local_chunk_index"].range.lte == 6
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_does_not_filter_by_doc_name():
+    client = FakeAsyncQdrantClient()
+    repo = VectorIndexRepository(
+        client=client,
+        collection_name="finance_documents",
+    )
+
+    result = await repo.hybrid_search(
+        dense_vector=[0.1, 0.2, 0.3],
+        sparse_indices=[1, 2, 3],
+        sparse_values=[0.3, 0.2, 0.1],
+        allowed_document_ids=["doc-1", "doc-2"],
+        limit=5,
+        prefetch_limit=10,
+    )
+
+    assert result == []
+
+    qdrant_filter = client.queried["query_filter"]
+    must_keys = [condition.key for condition in qdrant_filter.must]
+
+    assert "document_id" in must_keys
+    assert "doc_name" not in must_keys
+
+    document_condition = next(
+        condition for condition in qdrant_filter.must
+        if condition.key == "document_id"
+    )
+
+    assert document_condition.match.any == ["doc-1", "doc-2"]

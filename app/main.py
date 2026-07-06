@@ -19,7 +19,16 @@ from app.services.ingestion.pipeline import IngestionPipeline
 from app.services.jobs.ingestion_queue import IngestionQueue
 from app.services.jobs.ingestion_runner import IngestionRunner
 from app.use_cases.ingestion import IngestDocumentUseCase
-from app.infrastructure.rag import build_chunker, build_dense_embedder, build_sparse_embedder
+from app.infrastructure.rag import (build_chunker,
+                                    build_dense_embedder,
+                                    build_sparse_embedder,
+                                    build_reranker
+                                    )
+from app.infrastructure.openai import build_openai_client
+from app.infrastructure.agent import build_agent_use_case
+from app.services.retrieval.hybrid import AgentHybridRetriever
+from app.use_cases.retrieval import RetrieveDocumentsUseCase
+from app.api.routes.router import api_router
 
 
 
@@ -29,7 +38,12 @@ async def lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
         postgres_engine = build_postgres_engine()
         db_sessionmaker = build_sessionmaker(postgres_engine)
+        uow_factory = lambda: SqlAlchemyUnitOfWork(db_sessionmaker)
         stack.push_async_callback(postgres_engine.dispose)
+
+        openai_client = build_openai_client()
+        stack.push_async_callback(openai_client.close)
+
 
         s3_client = await stack.enter_async_context(
             s3session.client(
@@ -61,6 +75,25 @@ async def lifespan(app: FastAPI):
         sparse_embedder = build_sparse_embedder()
         chunker = build_chunker()
 
+        reranker = build_reranker()
+
+        retriever = AgentHybridRetriever(
+            vector_repo=vector_repo,
+            dense_embedder=dense_embedder,
+            sparse_embedder=sparse_embedder,
+            reranker=reranker,
+            prefetch_min=settings.RAG_PREFETCH_MIN,
+            fusion_min=settings.RAG_FUSION_MIN,
+            first_stage_multiplier=settings.RAG_FIRST_STAGE_MULTIPLIER,
+            fusion_multiplier=settings.RAG_FUSION_MULTIPLIER,
+        )
+
+        retrieval_use_case = RetrieveDocumentsUseCase(
+            uow_factory=uow_factory,
+            retriever=retriever,
+            global_workspace_id=settings.RAG_GLOBAL_WORKSPACE_ID,
+        )
+
         pipeline = IngestionPipeline(
             vector_repo=vector_repo,
             duckdb_repo=duckdb_repo,
@@ -69,12 +102,17 @@ async def lifespan(app: FastAPI):
             sparse_embedder=sparse_embedder,
         )
 
+        agent_use_case = build_agent_use_case(
+            openai_client=openai_client,
+            retrieval_use_case=retrieval_use_case,
+        )
+
         ingestion_queue = IngestionQueue(
             maxsize=int(getattr(settings, "RAG_INGESTION_QUEUE_MAXSIZE", 0))
         )
 
         ingest_use_case = IngestDocumentUseCase(
-            uow_factory=lambda: SqlAlchemyUnitOfWork(db_sessionmaker),
+            uow_factory=uow_factory,
             s3_repository=s3_repo,
             pipeline=pipeline,
         )
@@ -98,6 +136,7 @@ async def lifespan(app: FastAPI):
         stack.push_async_callback(shutdown_ingestion_runner)
 
         app.state.db_sessionmaker = db_sessionmaker
+        app.state.uow_factory = uow_factory
         app.state.s3_repo = s3_repo
         app.state.qdrant_client = qdrant_client
         app.state.vector_repo = vector_repo
@@ -105,6 +144,11 @@ async def lifespan(app: FastAPI):
         app.state.ingestion_queue = ingestion_queue
         app.state.ingestion_runner = ingestion_runner
         app.state.ingestion_pipeline = pipeline
+        app.state.reranker = reranker
+        app.state.retriever = retriever
+        app.state.retrieval_use_case = retrieval_use_case
+        app.state.openai_client = openai_client
+        app.state.agent_use_case = agent_use_case
 
         yield
 
@@ -123,7 +167,4 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/health", tags=["health"])
-async def health_check():
-    return {"status": "ok"}
+app.include_router(api_router)
