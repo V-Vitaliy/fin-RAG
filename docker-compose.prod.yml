@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: finrag-postgres
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-financial_rag_db}
+    volumes:
+      - ${FINRAG_DATA_ROOT:-/srv/finrag/data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag_user} -d ${POSTGRES_DB:-financial_rag_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:latest}
+    container_name: finrag-qdrant
+    restart: unless-stopped
+    # Internal for app containers. Localhost binding keeps optional admin access via SSH only.
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - ${FINRAG_DATA_ROOT:-/srv/finrag/data}/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: finrag-api
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    # No public host port. The UI container reaches API through Docker DNS: http://api:8000.
+    expose:
+      - "8000"
+    volumes:
+      - ${FINRAG_DATA_ROOT:-/srv/finrag/data}/duckdb:/data/duckdb
+      - ${FINRAG_DATA_ROOT:-/srv/finrag/data}/evals:/data/evals
+      - ${FINRAG_DATA_ROOT:-/srv/finrag/data}/batches:/data/batches
+      - ${FINRAG_IMPORT_ROOT:-/srv/finrag/import}:/data/import:ro
+      - ${FINRAG_MODELS_ROOT:-/srv/finrag/models}/huggingface:/models/huggingface
+      - ${FINRAG_MODELS_ROOT:-/srv/finrag/models}/sentence-transformers:/models/sentence-transformers
+      - ./evaluation/data:/workspace/evaluation/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: finrag-ui
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      # This is intentionally internal. Browser users only need the UI port.
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://api:8000/api/v1}
+    ports:
+      - "${UI_BIND_HOST:-0.0.0.0}:${UI_PORT:-8001}:8001"
+    depends_on:
+      - api
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from app.services.retrieval.hybrid import AgentHybridRetriever
+from app.services.agent.citations import AgentCitationRegistry
 
 
 NO_ACCESSIBLE_DOCUMENTS_MESSAGE = "No accessible ready documents found."
@@ -114,6 +115,7 @@ class RetrieveDocumentsUseCase:
         expand_neighbors: bool = False,
         neighbor_window: int = 1,
         extra_queries: list[str] | None = None,
+        citation_registry: AgentCitationRegistry | None = None,
     ) -> str:
         access = await self._resolve_access(
             workspace_id=workspace_id,
@@ -130,6 +132,7 @@ class RetrieveDocumentsUseCase:
             expand_neighbors=expand_neighbors,
             neighbor_window=neighbor_window,
             extra_queries=extra_queries,
+            citation_registry=citation_registry,
         )
 
     async def search_tables(
@@ -140,6 +143,7 @@ class RetrieveDocumentsUseCase:
         requested_document_ids: list[UUID | str] | None = None,
         top_k: int = 8,
         extra_queries: list[str] | None = None,
+        citation_registry: AgentCitationRegistry | None = None,
     ) -> str:
         access = await self._resolve_access(
             workspace_id=workspace_id,
@@ -154,4 +158,5 @@ class RetrieveDocumentsUseCase:
             allowed_document_ids=access.document_ids,
             top_k=top_k,
             extra_queries=extra_queries,
+            citation_registry=citation_registry,
         )

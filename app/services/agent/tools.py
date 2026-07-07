@@ -8,11 +8,11 @@ import operator
 import re
 from typing import Any
 from uuid import UUID
-
 import duckdb
 
 from app.services.agent.metric_contracts import get_metric_contract, compact_contract
 from app.use_cases.retrieval import RetrieveDocumentsUseCase
+from app.services.agent.citations import AgentCitationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,13 @@ class SearchTextTool(BaseAgentTool):
         workspace_id: UUID,
         requested_document_ids: list[UUID | str] | None,
         top_k: int = 8,
+        citation_registry: AgentCitationRegistry | None = None,
     ):
         self.retrieval_use_case = retrieval_use_case
         self.workspace_id = workspace_id
         self.requested_document_ids = requested_document_ids
         self.top_k = int(top_k)
+        self.citation_registry = citation_registry
 
     def get_schema(self) -> dict[str, Any]:
         return {
@@ -89,6 +91,7 @@ class SearchTextTool(BaseAgentTool):
             expand_neighbors=True,
             neighbor_window=1,
             extra_queries=query_rewrites,
+            citation_registry=self.citation_registry,
         )
 
 
@@ -102,11 +105,13 @@ class SearchTablesTool(BaseAgentTool):
         workspace_id: UUID,
         requested_document_ids: list[UUID | str] | None,
         top_k: int = 8,
+        citation_registry: AgentCitationRegistry | None = None,
     ):
         self.retrieval_use_case = retrieval_use_case
         self.workspace_id = workspace_id
         self.requested_document_ids = requested_document_ids
         self.top_k = int(top_k)
+        self.citation_registry = citation_registry
 
     def get_schema(self) -> dict[str, Any]:
         return {
@@ -152,6 +157,7 @@ class SearchTablesTool(BaseAgentTool):
             requested_document_ids=self.requested_document_ids,
             top_k=self.top_k,
             extra_queries=concept_rewrites,
+            citation_registry=self.citation_registry,
         )
 
 
@@ -350,10 +356,12 @@ class DuckDBReadOnlyTool(BaseAgentTool):
         duckdb_path: str,
         allowed_document_ids: list[str],
         max_rows: int = 80,
+        citation_registry: AgentCitationRegistry | None = None,
     ):
         self.duckdb_path = duckdb_path
         self.allowed_document_ids = {str(document_id) for document_id in allowed_document_ids}
         self.max_rows = int(max_rows)
+        self.citation_registry = citation_registry
 
     def get_schema(self) -> dict[str, Any]:
         return {
@@ -362,7 +370,7 @@ class DuckDBReadOnlyTool(BaseAgentTool):
                 "name": self.name,
                 "description": (
                     "Executes a read-only SELECT query on DuckDB. Use exact table names and columns returned by search_tables or describe_table. "
-                    "Only SELECT / WITH ... SELECT is allowed."
+                    "Only direct SELECT queries are allowed. CTE/WITH queries are not supported in this tool."
                 ),
                 "parameters": {
                     "type": "object",
@@ -402,8 +410,11 @@ class DuckDBReadOnlyTool(BaseAgentTool):
             return "Error: only read-only SELECT queries are allowed."
 
         lowered = q_no_tail_semicolon.lower()
-        if not (lowered.startswith("select") or lowered.startswith("with")):
-            return "Error: only SELECT or WITH ... SELECT queries are allowed."
+        if lowered.startswith("with"):
+            return "Error: CTE/WITH queries are not supported. Use a direct SELECT against an exact table name."
+
+        if not lowered.startswith("select"):
+            return "Error: only direct SELECT queries are allowed."
 
         return None
 
@@ -465,8 +476,7 @@ class DuckDBReadOnlyTool(BaseAgentTool):
 
         return None
 
-    @staticmethod
-    def _source_line(catalog_row: dict[str, Any] | None, table_name: str | None) -> str:
+    def _source_line(self, catalog_row: dict[str, Any] | None, table_name: str | None) -> str:
         if not catalog_row:
             return f"Source: table={table_name}" if table_name else ""
 
@@ -476,12 +486,19 @@ class DuckDBReadOnlyTool(BaseAgentTool):
             page = catalog_row.get("page_number")
             citation = f"{doc} p.{page}, table={catalog_row.get('table_name')}"
 
+        marker = (
+            self.citation_registry.register(catalog_row)
+            if self.citation_registry is not None
+            else citation
+        )
+
         parts = [
-            f"Source: [{citation}]",
+            f"Source: [{marker} | source={citation}]",
             f"table={catalog_row.get('table_name')}",
             f"document_id={catalog_row.get('document_id')}",
             f"statement_type={catalog_row.get('statement_type')}",
         ]
+
         if catalog_row.get("evidence_id"):
             parts.append(f"evidence_id={catalog_row.get('evidence_id')}")
         if catalog_row.get("unit_scale"):
@@ -545,9 +562,74 @@ class DuckDBReadOnlyTool(BaseAgentTool):
         except Exception:
             return base + "Fix your query and try again. Call describe_table to inspect exact columns."
 
+    @staticmethod
+    def _normalize_label_term(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+    def _try_normalized_label_fallback(
+        self,
+        *,
+        conn,
+        query: str,
+        source_lines: list[str],
+    ) -> str | None:
+        """
+        Recovery for Docling-extracted row labels such as Totalcurrentassets.
+        If a simple ILIKE row-label query returns zero rows, retry with a
+        normalized comparison that removes spaces/punctuation from both sides.
+        """
+        pattern = re.compile(
+            r'^(?P<select>select\s+.+?\s+from\s+["`]?'
+            r'(?P<table>[A-Za-z_][A-Za-z0-9_]*)["`]?\s+)'
+            r'where\s+["`]?(?P<label_col>[A-Za-z_][A-Za-z0-9_]*)["`]?\s+ilike\s+'
+            r"['\"]%(?P<term>[^'\"]+)%['\"]\s*;?\s*$",
+            re.IGNORECASE | re.DOTALL,
+        )
+        match = pattern.match(str(query or "").strip())
+        if not match:
+            return None
+
+        table_name = match.group("table")
+        label_col = match.group("label_col")
+        raw_term = match.group("term")
+        normalized_term = self._normalize_label_term(raw_term)
+
+        if not normalized_term:
+            return None
+
+        fallback_query = (
+            f'{match.group("select")}WHERE '
+            f"regexp_replace(lower(CAST({self._quote_ident(label_col)} AS VARCHAR)), "
+            f"'[^a-z0-9]+', '', 'g') LIKE ?"
+        )
+
+        try:
+            fallback_df = conn.execute(
+                fallback_query,
+                [f"%{normalized_term}%"],
+            ).fetchdf()
+        except Exception as exc:
+            logger.warning("Normalized row-label fallback failed for %s: %s", table_name, exc)
+            return None
+
+        if fallback_df.empty:
+            return None
+
+        if len(fallback_df) > self.max_rows:
+            fallback_df = fallback_df.head(self.max_rows)
+            truncated_note = f"\n\nResult truncated to first {self.max_rows} rows."
+        else:
+            truncated_note = ""
+
+        return (
+            ("\n".join(source_lines) + "\n" if source_lines else "")
+            + f"Normalized row-label fallback used for term {raw_term!r}.\n"
+            + fallback_df.to_markdown(index=False)
+            + truncated_note
+        )
+
     def _execute_sync(self, query: str) -> str:
         query = str(query or "").strip()
-        query = re.sub(r"[\}\)]+\s*,?\s*[\}\)]*\s*$", "", query).strip()
 
         for _ in range(5):
             new_query = query.replace('\\"', '"')
@@ -585,6 +667,14 @@ class DuckDBReadOnlyTool(BaseAgentTool):
                     truncated_note = ""
 
                 if df.empty:
+                    normalized_fallback = self._try_normalized_label_fallback(
+                        conn=conn,
+                        query=query,
+                        source_lines=source_lines,
+                    )
+                    if normalized_fallback:
+                        return normalized_fallback
+
                     return (
                         ("\n".join(source_lines) + "\n" if source_lines else "")
                         + "Query returned 0 rows. Check exact column names and WHERE conditions."
@@ -618,9 +708,11 @@ class DescribeTableTool(BaseAgentTool):
         *,
         duckdb_path: str,
         allowed_document_ids: list[str],
+        citation_registry: AgentCitationRegistry | None = None,
     ):
         self.duckdb_path = duckdb_path
         self.allowed_document_ids = {str(document_id) for document_id in allowed_document_ids}
+        self.citation_registry = citation_registry
 
     def get_schema(self) -> dict[str, Any]:
         return {
@@ -699,18 +791,24 @@ class DescribeTableTool(BaseAgentTool):
 
         return None
 
-    @staticmethod
-    def _source_line(row: dict[str, Any]) -> str:
+    def _source_line(self, row: dict[str, Any]) -> str:
         citation = row.get("citation_label")
         if not citation:
             citation = f"{row.get('doc_name')} p.{row.get('page_number')}, table={row.get('table_name')}"
 
+        marker = (
+            self.citation_registry.register(row)
+            if self.citation_registry is not None
+            else citation
+        )
+
         parts = [
-            f"Source: [{citation}]",
+            f"Source: [{marker} | source={citation}]",
             f"table={row.get('table_name')}",
             f"document_id={row.get('document_id')}",
             f"statement_type={row.get('statement_type')}",
         ]
+
         if row.get("evidence_id"):
             parts.append(f"evidence_id={row.get('evidence_id')}")
         if row.get("unit_scale"):
@@ -824,27 +922,33 @@ def build_agent_tools(
     allowed_document_ids: list[str],
     duckdb_path: str,
     retrieval_top_k: int = 8,
+    citation_registry: AgentCitationRegistry | None = None,
 ) -> dict[str, BaseAgentTool]:
+
     return {
         "search_text": SearchTextTool(
             retrieval_use_case=retrieval_use_case,
             workspace_id=workspace_id,
             requested_document_ids=requested_document_ids,
             top_k=retrieval_top_k,
+            citation_registry=citation_registry,
         ),
         "search_tables": SearchTablesTool(
             retrieval_use_case=retrieval_use_case,
             workspace_id=workspace_id,
             requested_document_ids=requested_document_ids,
             top_k=retrieval_top_k,
+            citation_registry=citation_registry,
         ),
         "describe_table": DescribeTableTool(
             duckdb_path=duckdb_path,
             allowed_document_ids=allowed_document_ids,
+            citation_registry=citation_registry,
         ),
         "execute_sql": DuckDBReadOnlyTool(
             duckdb_path=duckdb_path,
             allowed_document_ids=allowed_document_ids,
+            citation_registry=citation_registry,
         ),
         "get_financial_formula": GetFinancialFormulaTool(),
         "calculate": CalculateTool(),

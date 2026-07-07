@@ -24,3 +24,5 @@ class AgentToolTrace:
 class AgentAnswer:
     answer: str
     tool_calls: list[AgentToolTrace] = field(default_factory=list)
+    citations: list[Any] = field(default_factory=list)
+    source_documents: list[Any] = field(default_factory=list)

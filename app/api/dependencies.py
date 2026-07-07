@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from uuid import UUID
-from fastapi import Header, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated
@@ -25,6 +25,12 @@ from app.services.jobs.ingestion_queue import IngestionQueue
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+def _public_email_domains_from_settings() -> set[str]:
+    return {
+        domain.strip().lower()
+        for domain in str(settings.AUTH_PUBLIC_EMAIL_DOMAINS or "").split(",")
+        if domain.strip()
+    }
 
 async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     sessionmaker = request.app.state.db_sessionmaker
@@ -51,6 +57,8 @@ def get_auth_use_case(request: Request) -> AuthUseCase:
     return AuthUseCase(
         uow=SqlAlchemyUnitOfWork(request.app.state.db_sessionmaker),
         password_hasher=PasswordHasher(),
+        enable_company_domain_workspaces=settings.AUTH_ENABLE_COMPANY_DOMAIN_WORKSPACES,
+        public_email_domains=_public_email_domains_from_settings(),
     )
 
 def get_ingestion_queue(request: Request) -> IngestionQueue:
@@ -62,6 +70,23 @@ def get_document_use_case(request: Request) -> DocumentUseCase:
         s3_repository=request.app.state.s3_repo,
         ingestion_queue=request.app.state.ingestion_queue,
     )
+
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    auth_use_case: Annotated[AuthUseCase, Depends(get_auth_use_case)],
+) -> User:
+    try:
+        payload = decode_access_token(token)
+        if not payload.sub:
+            raise ValueError("Token subject is missing")
+
+        return await auth_use_case.get_user_by_id(UUID(str(payload.sub)))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
 async def get_workspace_id(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -107,20 +132,3 @@ def get_uow_factory(request: Request):
             detail="Database service is not initialized.",
         )
     return uow_factory
-
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    auth_use_case: Annotated[AuthUseCase, Depends(get_auth_use_case)],
-) -> User:
-    try:
-        payload = decode_access_token(token)
-        if not payload.sub:
-            raise ValueError("Token subject is missing")
-
-        return await auth_use_case.get_user_by_id(UUID(str(payload.sub)))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials.",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc

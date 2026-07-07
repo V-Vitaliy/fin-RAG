@@ -57,6 +57,8 @@ async def ask_rag(
             )
             for call in result.tool_calls
         ],
+        citations=result.citations,
+        source_documents=result.source_documents,
     )
 
 

@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 import pandas as pd
+from collections.abc import Awaitable, Callable
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -26,7 +27,6 @@ warnings.filterwarnings("ignore", message=".*export_to_dataframe.*")
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class IngestionDocument:
@@ -54,6 +54,9 @@ class IngestionResult:
     qdrant_points_count: int
     duckdb_tables_count: int
     documents: list[DocumentIngestionResult]
+
+IngestionEventSink = Callable[[str, dict[str, Any]], Awaitable[None]]
+
 
 
 def _normalize_text(value: Any) -> str:
@@ -391,11 +394,25 @@ class IngestionPipeline:
     async def ingest_document(
         self,
         document: IngestionDocument,
+        event_sink: IngestionEventSink | None = None,
         page_break: str = "---PAGE_BREAK---",
     ) -> DocumentIngestionResult:
+
         if not os.path.exists(document.pdf_path):
             raise FileNotFoundError(f"PDF file does not exist: {document.pdf_path}")
 
+        async def emit(stage: str, message: str, **extra: Any) -> None:
+            if event_sink is not None:
+                await event_sink(
+                    "stage",
+                    {
+                        "stage": stage,
+                        "message": message,
+                        **extra,
+                    },
+                )
+
+        await emit("storage_ready", "Preparing vector/table storage")
         await self._ensure_storage_ready()
 
         logger.info(
@@ -405,18 +422,22 @@ class IngestionPipeline:
             document.filename,
         )
 
+        await emit("cleanup_previous_index", "Cleaning previous index state")
         await self.vector_repo.delete_points_by_document_id(document.document_id)
         await self.duckdb_repo.deactivate_document_tables(document.document_id)
 
+        await emit("parsing", "Parsing PDF")
         doc_res = await asyncio.to_thread(self.converter.convert, document.pdf_path)
 
         doc_chunks: list[dict[str, Any]] = []
+        await emit("tables", "Extracting financial tables")
         table_count = await self._extract_tables_to_duckdb_and_stubs(
             doc_res=doc_res,
             document=document,
             doc_chunks=doc_chunks,
         )
 
+        await emit("chunking", "Extracting narrative chunks")
         narrative_chunks = await self._extract_narrative_chunks(
             doc_res=doc_res,
             document=document,
@@ -434,8 +455,14 @@ class IngestionPipeline:
                 duckdb_tables_count=table_count,
             )
 
+        await emit("metadata", "Assigning chunk metadata")
         self._assign_chunk_metadata(document=document, chunks=doc_chunks)
 
+        await emit(
+            "embedding_indexing",
+            "Creating embeddings and writing vector index",
+            chunks_count=len(doc_chunks),
+        )
         points_count = await self._embed_and_upsert_chunks(
             document=document,
             chunks=doc_chunks,
@@ -446,6 +473,13 @@ class IngestionPipeline:
             document.document_id,
             table_count,
             points_count,
+        )
+
+        await emit(
+            "ingestion_completed",
+            "Document ingestion completed",
+            qdrant_points_count=points_count,
+            duckdb_tables_count=table_count,
         )
 
         return DocumentIngestionResult(
@@ -865,11 +899,14 @@ class IngestionPipeline:
         return chunks
 
     def _assign_chunk_metadata(
-        self,
-        *,
-        document: IngestionDocument,
-        chunks: list[dict[str, Any]],
+            self,
+            *,
+            document: IngestionDocument,
+            chunks: list[dict[str, Any]],
     ) -> None:
+    
+        local_chunk_index = 0
+
         for chunk_index, chunk in enumerate(chunks):
             page_number = chunk.get("page_number")
 
@@ -885,9 +922,12 @@ class IngestionPipeline:
 
             if is_real_table_stub:
                 table_name = chunk["table_name"]
+
                 chunk["source_type"] = "table_stub"
                 chunk["chunk_id"] = f"{table_name}:stub"
                 chunk["evidence_id"] = table_name
+                chunk["local_chunk_index"] = None
+
                 chunk.setdefault(
                     "citation_label",
                     _citation_label(document.doc_name, page_number, table_name),
@@ -898,13 +938,19 @@ class IngestionPipeline:
 
                 chunk["is_table_stub"] = False
 
+                # Important fix:
+                # override any page-local index produced by chunker.
+                chunk["local_chunk_index"] = local_chunk_index
+                local_chunk_index += 1
+
                 if was_table_like:
                     chunk["source_type"] = "text_table_reference"
                 else:
                     chunk.setdefault("source_type", "text")
 
-                chunk["chunk_id"] = f"{document.document_id}:chunk:{chunk_index}"
+                chunk["chunk_id"] = f"{document.document_id}:chunk:{chunk['local_chunk_index']}"
                 chunk["evidence_id"] = chunk["chunk_id"]
+
                 chunk.setdefault("citation_label", _citation_label(document.doc_name, page_number))
                 chunk.setdefault("unit_scale", None)
                 chunk.setdefault("is_primary_statement", False)

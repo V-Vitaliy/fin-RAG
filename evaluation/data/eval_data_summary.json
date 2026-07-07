@@ -1,0 +1,650 @@
+{
+  "train": {
+    "questions": 59,
+    "unique_documents": 27,
+    "unique_companies": 11,
+    "question_type_counts": {
+      "metrics-generated": 13,
+      "domain-relevant": 24,
+      "novel-generated": 22
+    },
+    "doc_type_counts": {
+      "10k": 40,
+      "10q": 6,
+      "8k": 8,
+      "Earnings": 5
+    },
+    "company_counts": {
+      "3M": 8,
+      "AES Corporation": 3,
+      "AMD": 8,
+      "Best Buy": 8,
+      "Block": 3,
+      "Costco": 1,
+      "Foot Locker": 2,
+      "Johnson & Johnson": 9,
+      "Paypal": 1,
+      "PepsiCo": 11,
+      "Verizon": 5
+    },
+    "documents": [
+      [
+        "3M_2018_10K",
+        2
+      ],
+      [
+        "3M_2022_10K",
+        3
+      ],
+      [
+        "3M_2023Q2_10Q",
+        3
+      ],
+      [
+        "AES_2022_10K",
+        3
+      ],
+      [
+        "AMD_2015_10K",
+        1
+      ],
+      [
+        "AMD_2022_10K",
+        7
+      ],
+      [
+        "BESTBUY_2017_10K",
+        1
+      ],
+      [
+        "BESTBUY_2019_10K",
+        1
+      ],
+      [
+        "BESTBUY_2023_10K",
+        3
+      ],
+      [
+        "BESTBUY_2024Q2_10Q",
+        3
+      ],
+      [
+        "BLOCK_2016_10K",
+        1
+      ],
+      [
+        "BLOCK_2020_10K",
+        2
+      ],
+      [
+        "COSTCO_2021_10K",
+        1
+      ],
+      [
+        "FOOTLOCKER_2022_8K_dated-2022-05-20",
+        1
+      ],
+      [
+        "FOOTLOCKER_2022_8K_dated_2022-08-19",
+        1
+      ],
+      [
+        "JOHNSON_JOHNSON_2022Q4_EARNINGS",
+        2
+      ],
+      [
+        "JOHNSON_JOHNSON_2022_10K",
+        3
+      ],
+      [
+        "JOHNSON_JOHNSON_2023Q2_EARNINGS",
+        1
+      ],
+      [
+        "JOHNSON_JOHNSON_2023_8K_dated-2023-08-30",
+        3
+      ],
+      [
+        "PAYPAL_2022_10K",
+        1
+      ],
+      [
+        "PEPSICO_2021_10K",
+        1
+      ],
+      [
+        "PEPSICO_2022_10K",
+        5
+      ],
+      [
+        "PEPSICO_2023Q1_EARNINGS",
+        2
+      ],
+      [
+        "PEPSICO_2023_8K_dated-2023-05-05",
+        1
+      ],
+      [
+        "PEPSICO_2023_8K_dated-2023-05-30",
+        2
+      ],
+      [
+        "VERIZON_2021_10K",
+        2
+      ],
+      [
+        "VERIZON_2022_10K",
+        3
+      ]
+    ]
+  },
+  "val": {
+    "questions": 45,
+    "unique_documents": 30,
+    "unique_companies": 10,
+    "question_type_counts": {
+      "metrics-generated": 20,
+      "domain-relevant": 13,
+      "novel-generated": 12
+    },
+    "doc_type_counts": {
+      "10k": 37,
+      "10q": 5,
+      "Earnings": 3
+    },
+    "company_counts": {
+      "Activision Blizzard": 2,
+      "Adobe": 5,
+      "American Water Works": 3,
+      "Boeing": 8,
+      "Coca-Cola": 3,
+      "Corning": 4,
+      "CVS Health": 4,
+      "General Mills": 4,
+      "JPMorgan": 5,
+      "MGM Resorts": 7
+    },
+    "documents": [
+      [
+        "ACTIVISIONBLIZZARD_2019_10K",
+        2
+      ],
+      [
+        "ADOBE_2015_10K",
+        1
+      ],
+      [
+        "ADOBE_2016_10K",
+        1
+      ],
+      [
+        "ADOBE_2017_10K",
+        1
+      ],
+      [
+        "ADOBE_2022_10K",
+        2
+      ],
+      [
+        "AMERICANWATERWORKS_2020_10K",
+        1
+      ],
+      [
+        "AMERICANWATERWORKS_2021_10K",
+        1
+      ],
+      [
+        "AMERICANWATERWORKS_2022_10K",
+        1
+      ],
+      [
+        "BOEING_2018_10K",
+        1
+      ],
+      [
+        "BOEING_2022_10K",
+        7
+      ],
+      [
+        "COCACOLA_2017_10K",
+        1
+      ],
+      [
+        "COCACOLA_2021_10K",
+        1
+      ],
+      [
+        "COCACOLA_2022_10K",
+        1
+      ],
+      [
+        "CORNING_2020_10K",
+        1
+      ],
+      [
+        "CORNING_2021_10K",
+        1
+      ],
+      [
+        "CORNING_2022_10K",
+        2
+      ],
+      [
+        "CVSHEALTH_2018_10K",
+        1
+      ],
+      [
+        "CVSHEALTH_2022_10K",
+        3
+      ],
+      [
+        "GENERALMILLS_2019_10K",
+        1
+      ],
+      [
+        "GENERALMILLS_2020_10K",
+        2
+      ],
+      [
+        "GENERALMILLS_2022_10K",
+        1
+      ],
+      [
+        "JPMORGAN_2021Q1_10Q",
+        2
+      ],
+      [
+        "JPMORGAN_2022Q2_10Q",
+        1
+      ],
+      [
+        "JPMORGAN_2022_10K",
+        1
+      ],
+      [
+        "JPMORGAN_2023Q2_10Q",
+        1
+      ],
+      [
+        "MGMRESORTS_2018_10K",
+        1
+      ],
+      [
+        "MGMRESORTS_2020_10K",
+        1
+      ],
+      [
+        "MGMRESORTS_2022Q4_EARNINGS",
+        3
+      ],
+      [
+        "MGMRESORTS_2022_10K",
+        1
+      ],
+      [
+        "MGMRESORTS_2023Q2_10Q",
+        1
+      ]
+    ]
+  },
+  "all": {
+    "questions": 104,
+    "unique_documents": 57,
+    "unique_companies": 21,
+    "question_type_counts": {
+      "metrics-generated": 33,
+      "domain-relevant": 37,
+      "novel-generated": 34
+    },
+    "doc_type_counts": {
+      "10k": 77,
+      "10q": 11,
+      "8k": 8,
+      "Earnings": 8
+    },
+    "company_counts": {
+      "3M": 8,
+      "AES Corporation": 3,
+      "AMD": 8,
+      "Best Buy": 8,
+      "Block": 3,
+      "Costco": 1,
+      "Foot Locker": 2,
+      "Johnson & Johnson": 9,
+      "Paypal": 1,
+      "PepsiCo": 11,
+      "Verizon": 5,
+      "Activision Blizzard": 2,
+      "Adobe": 5,
+      "American Water Works": 3,
+      "Boeing": 8,
+      "Coca-Cola": 3,
+      "Corning": 4,
+      "CVS Health": 4,
+      "General Mills": 4,
+      "JPMorgan": 5,
+      "MGM Resorts": 7
+    },
+    "documents": [
+      [
+        "3M_2018_10K",
+        2
+      ],
+      [
+        "3M_2022_10K",
+        3
+      ],
+      [
+        "3M_2023Q2_10Q",
+        3
+      ],
+      [
+        "ACTIVISIONBLIZZARD_2019_10K",
+        2
+      ],
+      [
+        "ADOBE_2015_10K",
+        1
+      ],
+      [
+        "ADOBE_2016_10K",
+        1
+      ],
+      [
+        "ADOBE_2017_10K",
+        1
+      ],
+      [
+        "ADOBE_2022_10K",
+        2
+      ],
+      [
+        "AES_2022_10K",
+        3
+      ],
+      [
+        "AMD_2015_10K",
+        1
+      ],
+      [
+        "AMD_2022_10K",
+        7
+      ],
+      [
+        "AMERICANWATERWORKS_2020_10K",
+        1
+      ],
+      [
+        "AMERICANWATERWORKS_2021_10K",
+        1
+      ],
+      [
+        "AMERICANWATERWORKS_2022_10K",
+        1
+      ],
+      [
+        "BESTBUY_2017_10K",
+        1
+      ],
+      [
+        "BESTBUY_2019_10K",
+        1
+      ],
+      [
+        "BESTBUY_2023_10K",
+        3
+      ],
+      [
+        "BESTBUY_2024Q2_10Q",
+        3
+      ],
+      [
+        "BLOCK_2016_10K",
+        1
+      ],
+      [
+        "BLOCK_2020_10K",
+        2
+      ],
+      [
+        "BOEING_2018_10K",
+        1
+      ],
+      [
+        "BOEING_2022_10K",
+        7
+      ],
+      [
+        "COCACOLA_2017_10K",
+        1
+      ],
+      [
+        "COCACOLA_2021_10K",
+        1
+      ],
+      [
+        "COCACOLA_2022_10K",
+        1
+      ],
+      [
+        "CORNING_2020_10K",
+        1
+      ],
+      [
+        "CORNING_2021_10K",
+        1
+      ],
+      [
+        "CORNING_2022_10K",
+        2
+      ],
+      [
+        "COSTCO_2021_10K",
+        1
+      ],
+      [
+        "CVSHEALTH_2018_10K",
+        1
+      ],
+      [
+        "CVSHEALTH_2022_10K",
+        3
+      ],
+      [
+        "FOOTLOCKER_2022_8K_dated-2022-05-20",
+        1
+      ],
+      [
+        "FOOTLOCKER_2022_8K_dated_2022-08-19",
+        1
+      ],
+      [
+        "GENERALMILLS_2019_10K",
+        1
+      ],
+      [
+        "GENERALMILLS_2020_10K",
+        2
+      ],
+      [
+        "GENERALMILLS_2022_10K",
+        1
+      ],
+      [
+        "JOHNSON_JOHNSON_2022Q4_EARNINGS",
+        2
+      ],
+      [
+        "JOHNSON_JOHNSON_2022_10K",
+        3
+      ],
+      [
+        "JOHNSON_JOHNSON_2023Q2_EARNINGS",
+        1
+      ],
+      [
+        "JOHNSON_JOHNSON_2023_8K_dated-2023-08-30",
+        3
+      ],
+      [
+        "JPMORGAN_2021Q1_10Q",
+        2
+      ],
+      [
+        "JPMORGAN_2022Q2_10Q",
+        1
+      ],
+      [
+        "JPMORGAN_2022_10K",
+        1
+      ],
+      [
+        "JPMORGAN_2023Q2_10Q",
+        1
+      ],
+      [
+        "MGMRESORTS_2018_10K",
+        1
+      ],
+      [
+        "MGMRESORTS_2020_10K",
+        1
+      ],
+      [
+        "MGMRESORTS_2022Q4_EARNINGS",
+        3
+      ],
+      [
+        "MGMRESORTS_2022_10K",
+        1
+      ],
+      [
+        "MGMRESORTS_2023Q2_10Q",
+        1
+      ],
+      [
+        "PAYPAL_2022_10K",
+        1
+      ],
+      [
+        "PEPSICO_2021_10K",
+        1
+      ],
+      [
+        "PEPSICO_2022_10K",
+        5
+      ],
+      [
+        "PEPSICO_2023Q1_EARNINGS",
+        2
+      ],
+      [
+        "PEPSICO_2023_8K_dated-2023-05-05",
+        1
+      ],
+      [
+        "PEPSICO_2023_8K_dated-2023-05-30",
+        2
+      ],
+      [
+        "VERIZON_2021_10K",
+        2
+      ],
+      [
+        "VERIZON_2022_10K",
+        3
+      ]
+    ]
+  },
+  "train_subset": {
+    "questions": 20,
+    "unique_documents": 15,
+    "unique_companies": 11,
+    "question_type_counts": {
+      "metrics-generated": 6,
+      "domain-relevant": 8,
+      "novel-generated": 6
+    },
+    "doc_type_counts": {
+      "10k": 13,
+      "10q": 2,
+      "8k": 3,
+      "Earnings": 2
+    },
+    "company_counts": {
+      "3M": 6,
+      "AES Corporation": 2,
+      "AMD": 1,
+      "Best Buy": 1,
+      "Block": 1,
+      "Costco": 1,
+      "Foot Locker": 2,
+      "Johnson & Johnson": 3,
+      "Paypal": 1,
+      "PepsiCo": 1,
+      "Verizon": 1
+    },
+    "documents": [
+      [
+        "3M_2018_10K",
+        2
+      ],
+      [
+        "3M_2022_10K",
+        2
+      ],
+      [
+        "3M_2023Q2_10Q",
+        2
+      ],
+      [
+        "AES_2022_10K",
+        2
+      ],
+      [
+        "AMD_2015_10K",
+        1
+      ],
+      [
+        "BESTBUY_2023_10K",
+        1
+      ],
+      [
+        "BLOCK_2016_10K",
+        1
+      ],
+      [
+        "COSTCO_2021_10K",
+        1
+      ],
+      [
+        "FOOTLOCKER_2022_8K_dated-2022-05-20",
+        1
+      ],
+      [
+        "FOOTLOCKER_2022_8K_dated_2022-08-19",
+        1
+      ],
+      [
+        "JOHNSON_JOHNSON_2022Q4_EARNINGS",
+        2
+      ],
+      [
+        "JOHNSON_JOHNSON_2022_10K",
+        1
+      ],
+      [
+        "PAYPAL_2022_10K",
+        1
+      ],
+      [
+        "PEPSICO_2023_8K_dated-2023-05-05",
+        1
+      ],
+      [
+        "VERIZON_2021_10K",
+        1
+      ]
+    ]
+  }
+}

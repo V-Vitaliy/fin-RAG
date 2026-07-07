@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from app.repositories.qdrant_repo import VectorIndexRepository
+from app.services.agent.citations import AgentCitationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,18 @@ class AgentHybridRetriever:
                 "growth company",
                 "products and services",
                 "major products",
+                "adjusted eps",
+                "adjusted earnings per share",
+                "guidance",
+                "accelerate",
+                "decelerate",
+                "votes against",
+                "board nominee",
+                "nominees",
+                "notional",
+                "derivative",
+                "cross currency",
+                "cross-currency",
             ]
         )
 
@@ -156,6 +169,10 @@ class AgentHybridRetriever:
             "working capital": "current assets current liabilities",
             "debt": "long-term debt borrowings notes payable",
             "segment": "business segment reporting geographic",
+            "adjusted eps": "adjusted earnings per share EPS guidance growth full-year",
+            "votes against": "proposal 1 elect directors nominees votes for votes against abstentions broker non-votes",
+            "notional": "derivative instruments outstanding notional amounts cross currency swaps interest rate swaps",
+            "derivative": "derivative instruments outstanding notional amounts cross currency swaps interest rate swaps",
         }
 
         query_lower = query.lower()
@@ -201,6 +218,21 @@ class AgentHybridRetriever:
                 f"{fy_tag} sales growth net sales increase decrease consolidated sales results of operations"
             )
 
+        if "adjusted eps" in query_lower or "adjusted earnings per share" in query_lower or ("eps" in query_lower and "accelerat" in query_lower):
+            narrative_expansions.append(
+                f"{fy_tag} adjusted EPS adjusted earnings per share full-year growth 2023 guidance growth accelerate decelerate"
+            )
+
+        if "votes against" in query_lower or "board nominee" in query_lower or "nominees" in query_lower:
+            narrative_expansions.append(
+                f"{fy_tag} proposal 1 elect directors nominees votes for votes against abstentions broker non-votes"
+            )
+
+        if "notional" in query_lower or "derivative" in query_lower or "cross currency" in query_lower or "cross-currency" in query_lower:
+            narrative_expansions.append(
+                f"{fy_tag} outstanding derivative instruments notional amounts cross currency swaps interest rate swaps"
+            )
+
         for expansion_query in narrative_expansions:
             expansion_query = expansion_query.strip()
             if expansion_query and expansion_query.lower() not in [rewrite.lower() for rewrite in rewrites]:
@@ -230,7 +262,10 @@ class AgentHybridRetriever:
         q = (query or "").lower()
         section = str(payload.get("section_path") or "").lower()
         source_type = str(payload.get("source_type") or "").lower()
+        statement_type = str(payload.get("statement_type") or "").lower()
+        text = str(payload.get("text") or "").lower()
         is_table = bool(payload.get("is_table_stub"))
+        is_primary_statement = bool(payload.get("is_primary_statement"))
 
         if is_table:
             boost += 0.2
@@ -284,23 +319,68 @@ class AgentHybridRetriever:
             if any(term in section for term in ["selected financial", "management", "results of operations", "consolidated results"]):
                 boost += 0.25
 
-        return max(boost, -0.75)
+        if any(term in q for term in ["return on assets", "roa", "total assets", "statement of financial position", "balance sheet"]):
+            if statement_type == "balance_sheet":
+                boost += 0.35
+            if is_primary_statement:
+                boost += 0.25
+            if "consolidated balance sheet" in text or "consolidated balance sheets" in text or "consolidated statements of financial position" in text:
+                boost += 0.45
+            if any(term in text or term in section for term in ["parent company", "financial statements and schedules", "schedule ii", "fair value", "level 1", "level 2", "level 3"]):
+                boost -= 0.35
+
+        if "adjusted eps" in q or "adjusted earnings per share" in q or ("eps" in q and ("accelerat" in q or "decelerat" in q)):
+            if "adjusted eps" in text or "adjusted earnings per share" in text:
+                boost += 0.45
+            if any(term in text for term in ["full-year", "full year", "guides 2023", "2023 guidance"]):
+                boost += 0.25
+            if "adjusted operational sales" in text and "adjusted eps" not in text:
+                boost -= 0.25
+
+        if "votes against" in q or "board nominee" in q or "nominees" in q:
+            if "proposal 1" in text or "votes against" in text or "broker non-votes" in text:
+                boost += 0.65
+            if any(term in section for term in ["voting", "annual meeting", "shareholders"]):
+                boost += 0.25
+
+        if "notional" in q or "derivative" in q or "cross currency" in q or "cross-currency" in q:
+            if "outstanding derivative" in text or "notional amounts outstanding" in text or "outstanding notional" in text:
+                boost += 0.65
+            if "cross currency" in text or "cross-currency" in text:
+                boost += 0.25
+            if "entered into" in text and not any(term in text for term in ["outstanding derivative", "notional amounts outstanding", "outstanding notional"]):
+                boost -= 0.35
+
+        return max(boost, -0.9)
 
     @staticmethod
     def _deduplicate(results: list) -> list:
-        seen: set[str] = set()
+        """
+        Deduplicate by stable payload identifiers, not by text prefix.
+
+        Prefix-based deduplication is risky because different chunks from the same
+        filing section can start with the same metadata/context prefix.
+        """
+        seen: set[tuple[str, str]] = set()
         output = []
 
         for result in results:
             payload = dict(getattr(result, "payload", None) or {})
-            prefix = str(payload.get("text") or "")[:120].strip()
 
-            if prefix and prefix in seen:
+            document_key = str(payload.get("document_id") or payload.get("doc_name") or "")
+            chunk_key = str(
+                payload.get("chunk_id")
+                or payload.get("text_hash")
+                or getattr(result, "id", "")
+                or str(payload.get("text") or "")[:120]
+            )
+
+            key = (document_key, chunk_key)
+
+            if key in seen:
                 continue
 
-            if prefix:
-                seen.add(prefix)
-
+            seen.add(key)
             output.append(result)
 
         return output
@@ -495,17 +575,17 @@ class AgentHybridRetriever:
 
     @staticmethod
     def _get_neighbor_index(payload: dict[str, Any]) -> int | None:
-        for key in ("local_chunk_index", "text_chunk_index", "chunk_index"):
-            value = payload.get(key)
-            if value is None:
-                continue
-            try:
-                index = int(value)
-            except Exception:
-                continue
-            if index >= 0:
-                return index
-        return None
+        value = payload.get("local_chunk_index")
+
+        if value is None:
+            return None
+
+        try:
+            index = int(value)
+        except Exception:
+            return None
+
+        return index if index >= 0 else None
 
     async def _fetch_text_neighbors(
         self,
@@ -628,6 +708,7 @@ class AgentHybridRetriever:
         results: list[dict[str, Any]],
         *,
         include_table_metadata: bool = True,
+        citation_registry: AgentCitationRegistry | None = None,
     ) -> str:
         """
         Format retrieved chunks for tool-calling agent.
@@ -646,6 +727,12 @@ class AgentHybridRetriever:
             source_type = result.get("source_type") or ("table_stub" if is_table else "text")
             label_prefix = "T" if is_table else "C"
 
+            marker = (
+                citation_registry.register(result)
+                if citation_registry is not None
+                else f"{label_prefix}{idx}"
+            )
+
             citation_label = result.get("citation_label") or (
                 f"{result.get('doc_name')} p.{result.get('page_number')}"
                 if result.get("page_number") is not None
@@ -654,7 +741,7 @@ class AgentHybridRetriever:
             evidence_id = result.get("evidence_id") or "unknown"
 
             header = (
-                f"[{label_prefix}{idx} | rank={result.get('rank')} | score={result.get('score')} | "
+                f"[{marker} | rank={result.get('rank')} | score={result.get('score')} | "
                 f"source={citation_label} | evidence_id={evidence_id} | "
                 f"doc={result.get('doc_name')} | document_id={result.get('document_id')} | "
                 f"page={result.get('page_number')} | source_type={source_type} | table_stub={is_table}"
@@ -706,6 +793,7 @@ class AgentHybridRetriever:
         expand_neighbors: bool = False,
         neighbor_window: int = 1,
         extra_queries: list[str] | None = None,
+        citation_registry: AgentCitationRegistry | None = None,
     ) -> str:
         results = await self.search(
             query=query,
@@ -723,7 +811,11 @@ class AgentHybridRetriever:
                 max_expanded=max(top_k * (2 * neighbor_window + 1), top_k),
             )
 
-        return self._format_results_for_tool(results, include_table_metadata=True)
+        return self._format_results_for_tool(
+            results,
+            include_table_metadata=True,
+            citation_registry=citation_registry,
+        )
 
     async def search_tables(
         self,
@@ -733,6 +825,7 @@ class AgentHybridRetriever:
         doc_name: str | None = None,
         top_k: int = 8,
         extra_queries: list[str] | None = None,
+        citation_registry: AgentCitationRegistry | None = None,
     ) -> str:
         results = await self.search(
             query=concept,
@@ -743,4 +836,8 @@ class AgentHybridRetriever:
             extra_queries=extra_queries,
         )
 
-        return self._format_results_for_tool(results, include_table_metadata=True)
+        return self._format_results_for_tool(
+            results,
+            include_table_metadata=True,
+            citation_registry=citation_registry,
+        )

@@ -36,10 +36,45 @@ class Workspace(Base):
     name = Column(String(255), nullable=False)
     type = Column(Enum(WorkspaceType), default=WorkspaceType.PRIVATE, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-
     users = relationship("User", back_populates="workspace", cascade="all, delete-orphan")
+    company = relationship("Company", back_populates="workspaces")
+    company_id = Column(
+        Uuid,
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     documents = relationship("Document", back_populates="workspace", cascade="all, delete-orphan")
 
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    workspaces = relationship("Workspace", back_populates="company")
+    email_domains = relationship(
+        "CompanyEmailDomain",
+        back_populates="company",
+        cascade="all, delete-orphan",
+    )
+
+
+class CompanyEmailDomain(Base):
+    __tablename__ = "company_email_domains"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    company_id = Column(
+        Uuid,
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    domain = Column(String(255), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    company = relationship("Company", back_populates="email_domains")
 
 class User(Base):
     __tablename__ = "users"
