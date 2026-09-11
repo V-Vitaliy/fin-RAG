@@ -1,6 +1,7 @@
 from io import BytesIO
 from typing import BinaryIO
 from types_aiobotocore_s3.client import S3Client
+import inspect
 
 
 class S3StorageRepository:
@@ -32,3 +33,23 @@ class S3StorageRepository:
             Bucket=self._bucket_name,
             Key=object_key,
         )
+
+    async def create_presigned_get_url(
+            self,
+            object_key: str,
+            *,
+            expires_in_seconds: int = 600,
+    ) -> str:
+        url = self._client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self._bucket_name,
+                "Key": object_key,
+            },
+            ExpiresIn=int(expires_in_seconds),
+        )
+
+        if inspect.isawaitable(url):
+            url = await url
+
+        return str(url)

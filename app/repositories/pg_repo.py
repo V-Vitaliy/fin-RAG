@@ -3,7 +3,16 @@ from datetime import datetime
 from typing import List, Optional, Sequence
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.domain import User, Workspace, Document, DocumentStatus, WorkspaceType
+from app.models.domain import (
+                                User,
+                                Workspace,
+                                Document,
+                                DocumentStatus,
+                                WorkspaceType,
+                                Company,
+                                CompanyEmailDomain,
+                            )
+
 
 
 class WorkspaceRepository:
@@ -12,9 +21,17 @@ class WorkspaceRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create_workspace(self, name: str, ws_type: WorkspaceType = WorkspaceType.PRIVATE) -> Workspace:
-        """Creates a new workspace."""
-        db_workspace = Workspace(name=name, type=ws_type)
+    async def create_workspace(
+            self,
+            name: str,
+            ws_type: WorkspaceType = WorkspaceType.PRIVATE,
+            company_id: uuid.UUID | None = None,
+    ) -> Workspace:
+        db_workspace = Workspace(
+            name=name,
+            type=ws_type,
+            company_id=company_id,
+        )
         self.db.add(db_workspace)
         await self.db.flush()
         await self.db.refresh(db_workspace)
@@ -26,6 +43,61 @@ class WorkspaceRepository:
             select(Workspace).where(Workspace.id == workspace_id)
         )
         return result.scalars().first()
+
+class CompanyRepository:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_workspace_by_email_domain(
+        self,
+        domain: str,
+    ) -> Optional[Workspace]:
+        normalized = str(domain or "").strip().lower()
+
+        if not normalized:
+            return None
+
+        result = await self.db.execute(
+            select(Workspace)
+            .join(Company, Workspace.company_id == Company.id)
+            .join(CompanyEmailDomain, CompanyEmailDomain.company_id == Company.id)
+            .where(CompanyEmailDomain.domain == normalized)
+            .order_by(Workspace.created_at.asc())
+        )
+        return result.scalars().first()
+
+    async def create_company_workspace_for_domain(
+        self,
+        *,
+        company_name: str,
+        domain: str,
+    ) -> Workspace:
+        normalized = str(domain or "").strip().lower()
+
+        if not normalized:
+            raise ValueError("Company email domain is required")
+
+        company = Company(name=company_name)
+        self.db.add(company)
+        await self.db.flush()
+
+        email_domain = CompanyEmailDomain(
+            company_id=company.id,
+            domain=normalized,
+        )
+        self.db.add(email_domain)
+
+        workspace = Workspace(
+            name=company_name,
+            type=WorkspaceType.PRIVATE,
+            company_id=company.id,
+        )
+        self.db.add(workspace)
+
+        await self.db.flush()
+        await self.db.refresh(workspace)
+
+        return workspace
 
 
 class UserRepository:

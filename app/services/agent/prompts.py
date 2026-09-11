@@ -16,7 +16,10 @@ BASE_SYSTEM_PROMPT = (
     "When using search_text or search_tables, you may provide 1-3 query_rewrites/concept_rewrites in the tool arguments. "
     "Those rewrites should be model-generated paraphrases of the same user question, using generic financial or MD&A language only. "
     "Do not put expected answers, exact row names, table IDs, page numbers, or unsupported facts into rewrites. "
-    "For calculated metrics, cite the source table/page for each input component, not just the final calculation."
+    "For calculated metrics, cite the source table/page for each input component, not just the final calculation. "
+    "In the final answer, do not include meta commentary such as 'Understood', 'Revised answer', 'If you want', "
+    "'I can also', or requests for the user to upload/provide/link documents. If tools are available, use them instead of asking for documents. "
+    "Answer directly and stop after the answer."
 )
 
 
@@ -121,8 +124,32 @@ def build_citation_validation_retry_prompt(reason: str) -> str:
         "Citation validation failed. "
         f"Reason: {reason}\n"
         "Revise the answer using only previously retrieved evidence. Add citations next to the factual numbers/claims. "
-        "Do not invent citations; use [C#]/[T#] or the source citation line returned by execute_sql."
+        "Do not invent citations; use only exact [C#]/[T#] markers from retrieved evidence. Raw source strings like [Company p.10, table=...] are not allowed because they cannot be linked."
     )
+
+
+def build_unsupported_assumption_retry_prompt() -> str:
+    return (
+        "Unsupported numeric assumption validation failed. "
+        "Do not use assumed, placeholder, typical, estimated, or made-up financial values. "
+        "For any required numeric component, either retrieve it from a cited filing source using tools, "
+        "or explicitly state that the component was not found and do not calculate the unsupported metric. "
+        "Revise the answer accordingly and cite every supported number with [C#]/[T#]."
+    )
+
+
+def build_no_tool_retrieval_retry_prompt(question: str) -> str:
+    return (
+        "You attempted to answer without retrieving evidence. This is not allowed for this RAG task. "
+        "You already have access to the relevant allowed filing/document through tools. "
+        "Do not ask the user to upload, link, provide, or identify documents. "
+        "Call search_text or search_tables now, then answer with [C#]/[T#] citations. "
+        "If the question is about board nominee votes, search for Proposal 1 / elect directors / votes against. "
+        "If the question is about registered securities, search the cover-page registration table. "
+        "If the question is about a metric, retrieve the exact filing components before calculating. "
+        f"Question: {question}"
+    )
+
 
 
 def build_three_errors_recovery_suffix() -> str:
@@ -148,3 +175,43 @@ def build_auto_describe_table_block(
         f"Instead of issuing more row-by-row SQL against {table_name}, use this schema/sample and batch the needed rows.\n"
         f"{snapshot}"
     )
+
+
+def build_forced_final_answer_prompt(
+    *,
+    question: str,
+    reason: str,
+    evidence_history: str,
+    metric_contract: dict[str, Any] | None,
+    narrative_required: bool,
+) -> str:
+    contract_block = (
+        "\nFinancial metric contract that must still be respected:\n"
+        + json.dumps(metric_contract, ensure_ascii=False, indent=2)
+        if metric_contract
+        else ""
+    )
+    narrative_block = (
+        "\nThis is a narrative/driver question. Use explicit filing wording from [C#] text evidence when available."
+        if narrative_required
+        else ""
+    )
+
+    return (
+        "You reached a forced finalization step. Do not call tools.\n"
+        f"Reason: {reason}\n\n"
+        "The previous agent state contains successful evidence-bearing tool results. "
+        "You must produce the best supported answer from that evidence instead of saying that no answer can be produced.\n"
+        "Rules:\n"
+        "- Use only the successful tool results below.\n"
+        "- If evidence is partial, answer the supported part and explicitly state what remains unsupported.\n"
+        "- If a calculation result is available, use it, but cite the source table markers for the input values.\n"
+        "- Every filing-specific number or claim must include an existing [C#] or [T#] marker from the evidence.\n"
+        "- Do not invent new citations, pages, table names, or numbers.\n"
+        "- Do not output a generic failure message if any answer can be supported by the evidence.\n"
+        f"{contract_block}{narrative_block}\n\n"
+        f"Question:\n{question}\n\n"
+        f"Successful evidence/tool history:\n{evidence_history}\n\n"
+        "Final answer:"
+    )
+

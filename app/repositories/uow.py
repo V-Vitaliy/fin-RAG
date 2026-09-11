@@ -7,6 +7,7 @@ from app.repositories.pg_repo import (
     DocumentRepository,
     UserRepository,
     WorkspaceRepository,
+    CompanyRepository,
 )
 
 
@@ -17,6 +18,7 @@ class SqlAlchemyUnitOfWork:
         self.workspaces: WorkspaceRepository | None = None
         self.users: UserRepository | None = None
         self.documents: DocumentRepository | None = None
+        self.companies: CompanyRepository | None = None
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         self.session = self._sessionmaker()
@@ -24,6 +26,7 @@ class SqlAlchemyUnitOfWork:
         self.workspaces = WorkspaceRepository(self.session)
         self.users = UserRepository(self.session)
         self.documents = DocumentRepository(self.session)
+        self.companies = CompanyRepository(self.session)
 
         return self
 
@@ -47,3 +50,4 @@ class SqlAlchemyUnitOfWork:
             self.workspaces = None
             self.users = None
             self.documents = None
+            self.companies = None

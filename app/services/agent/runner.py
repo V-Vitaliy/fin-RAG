@@ -28,6 +28,9 @@ from app.services.agent.prompts import (
     build_self_eval_retry_prompt,
     build_three_errors_recovery_suffix,
     build_user_question_prompt,
+    build_forced_final_answer_prompt,
+    build_unsupported_assumption_retry_prompt,
+    build_no_tool_retrieval_retry_prompt,
 )
 from app.services.agent.schemas import AgentAnswer, AgentToolTrace
 from app.services.agent.tools import BaseAgentTool
@@ -40,6 +43,8 @@ class AgentRunner:
     MAX_NARRATIVE_GROUNDING_RETRIES = 1
     MAX_FORMULA_VALIDATION_RETRIES = 1
     MAX_CITATION_RETRIES = 1
+    MAX_UNSUPPORTED_ASSUMPTION_RETRIES = 1
+    MAX_NO_TOOL_RETRIEVAL_RETRIES = 1
 
     def __init__(
         self,
@@ -49,6 +54,7 @@ class AgentRunner:
         model_name: str,
         max_tool_turns: int = 15,
         max_tokens: int = 4096,
+        reasoning_effort: str = "low",
         temperature: float = 0.0,
         trace_path: str | None = None,
         max_tool_output_chars: int = 12000,
@@ -63,6 +69,9 @@ class AgentRunner:
         self.trace_path = trace_path
         self.max_tool_output_chars = int(max_tool_output_chars)
         self.event_sink = event_sink
+        self.reasoning_effort = str(reasoning_effort or "low").strip().lower()
+        if self.reasoning_effort not in {"low", "medium", "high"}:
+            self.reasoning_effort = "low"
 
         self.tools_schemas = (
             [tool.get_schema() for tool in tools_registry.values()]
@@ -80,6 +89,16 @@ class AgentRunner:
         except Exception as exc:
             logger.warning("Agent event sink failed: %s", exc)
 
+    def _is_reasoning_model(self) -> bool:
+        model = self.model_name.lower()
+        return (
+                model.startswith("o")
+                or model.startswith("gpt-5")
+        )
+
+    def _instruction_role(self) -> str:
+        return "developer" if self._is_reasoning_model() else "system"
+
     def _build_create_params(
         self,
         messages: list[dict[str, Any]],
@@ -88,9 +107,14 @@ class AgentRunner:
         params: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
         }
+
+        if self._is_reasoning_model():
+            params["max_completion_tokens"] = self.max_tokens
+            params["reasoning_effort"] = self.reasoning_effort
+        else:
+            params["temperature"] = self.temperature
+            params["max_tokens"] = self.max_tokens
 
         if tools:
             params["tools"] = tools
@@ -99,14 +123,25 @@ class AgentRunner:
 
     async def _json_completion(self, prompt: str) -> dict[str, Any]:
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                response_format={"type": "json_object"},
-            )
+            messages = [{"role": "user", "content": prompt}]
+
+            params: dict[str, Any] = {
+                "model": self.model_name,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+            }
+
+            if self._is_reasoning_model():
+                params["max_completion_tokens"] = min(self.max_tokens, 1200)
+                params["reasoning_effort"] = self.reasoning_effort
+            else:
+                params["temperature"] = 0.0
+                params["max_tokens"] = min(self.max_tokens, 1200)
+
+            response = await self.client.chat.completions.create(**params)
             raw = response.choices[0].message.content or "{}"
             return json.loads(raw)
+
         except Exception as exc:
             logger.warning("Agent JSON helper completion failed: %s", exc)
             return {}
@@ -222,6 +257,21 @@ class AgentRunner:
                 "organic",
                 "organically",
                 "constant currency",
+                "national securities exchange",
+                "trading symbol",
+                "title of each class",
+                "registered to trade",
+                "exchange on which registered",
+                "adjusted eps",
+                "adjusted earnings per share",
+                "eps expected to accelerate",
+                "votes against",
+                "board member nominee",
+                "nominees",
+                "notional",
+                "derivative",
+                "cross currency",
+                "cross-currency",
             ]
         )
 
@@ -253,6 +303,33 @@ class AgentRunner:
             guidance.append(
                 "For revenue/sales growth questions, search for: net sales increase decrease sales growth results of operations "
                 "volume price currency acquisitions organic growth."
+            )
+
+        if "adjusted eps" in q or "adjusted earnings per share" in q or ("eps" in q and "accelerat" in q):
+            guidance.append(
+                "For adjusted EPS acceleration/deceleration questions, compare the same metric across periods: "
+                "explicit FY2022 adjusted EPS growth versus explicit FY2023 adjusted EPS guidance/growth. "
+                "Do not substitute adjusted operational sales growth, reported EPS, or a different guidance midpoint/change metric when the filing gives adjusted EPS growth rates."
+            )
+
+        if "votes against" in q or "board member nominee" in q or "nominees" in q:
+            guidance.append(
+                "For board nominee voting questions, search the Form 8-K voting results / Proposal 1 table using terms: "
+                "Proposal 1 elect directors nominees votes for votes against abstentions broker non-votes. "
+                "Extract the nominee with the highest Votes Against and compare against the next-highest nominee."
+            )
+
+        if "derivative" in q or "notional" in q or "cross currency" in q or "cross-currency" in q:
+            guidance.append(
+                "For derivative notional questions, prefer tables explicitly about outstanding derivative instruments or notional amounts outstanding at year-end. "
+                "Do not answer from tables about derivatives entered into during the year, fair values, gains/losses, or collateral unless the question asks for those."
+            )
+
+        if "national securities exchange" in q or "trading symbol" in q or "registered to trade" in q:
+            guidance.append(
+                "For securities registered on a national exchange, search the cover-page registration table using exact wording: "
+                "title of each class trading symbol name of each exchange on which registered. "
+                "Do not answer from marketable securities, investments, debt balances, or derivative notes."
             )
 
         if "acquisition" in q or "business combination" in q:
@@ -315,11 +392,10 @@ class AgentRunner:
         if not answer:
             return False
 
-        return bool(
-            re.search(r"\[(?:C|T)\d+\]", answer)
-            or re.search(r"\[[^\]]+\bp\.?\s*\d+[^\]]*\]", answer, re.IGNORECASE)
-            or re.search(r"\[[^\]]+table=tbl_[^\]]+\]", answer, re.IGNORECASE)
-        )
+        # Only registry markers can be resolved into citations/source_documents.
+        # Raw strings such as "[ACME p.10, table=tbl_...]" look like citations
+        # to the model, but AgentCitationRegistry cannot attach source links for them.
+        return bool(re.search(r"\[(?:C|T)\d+\]", answer))
 
     def _validate_citations(
         self,
@@ -345,6 +421,213 @@ class AgentRunner:
             )
 
         return True, ""
+
+
+    @staticmethod
+    def _answer_has_unsupported_numeric_assumption(answer: str) -> bool:
+        if not answer:
+            return False
+
+        lowered = answer.lower()
+        assumption_terms = [
+            "assumed",
+            "assumption",
+            "not retrieved",
+            "not available",
+            "placeholder",
+            "typically",
+            "estimated",
+            "estimate",
+            "using 100,000",
+            "100,000 million",
+        ]
+
+        if not any(term in lowered for term in assumption_terms):
+            return False
+
+        return AgentRunner._answer_has_financial_number(answer)
+
+    @staticmethod
+    def _is_generic_failure_answer(answer: str) -> bool:
+        normalized = (answer or "").strip().lower()
+        return normalized.startswith("i could not produce an answer") or normalized.startswith(
+            "i could not find enough evidence"
+        )
+
+    @staticmethod
+    def _answer_requests_user_provided_document(answer: str) -> bool:
+        text = (answer or "").lower()
+        if not text:
+            return False
+
+        request_terms = [
+            "please provide",
+            "provide one of the following",
+            "upload the",
+            "upload a",
+            "provide a link",
+            "link to the",
+            "send me the",
+            "give me the document",
+            "i don’t yet have any retrieved documents",
+            "i don't yet have any retrieved documents",
+            "i can’t retrieve",
+            "i can't retrieve",
+            "once you provide",
+            "confirm which company",
+            "company name (or ticker)",
+        ]
+        return any(term in text for term in request_terms)
+
+    def _retrieval_tools_available(self) -> bool:
+        return bool(
+            self.tools_registry.get("search_text")
+            or self.tools_registry.get("search_tables")
+        )
+
+    def _requires_retrieval_retry_before_final(
+        self,
+        *,
+        final_answer: str,
+        trace: list[AgentToolTrace],
+        narrative_required: bool,
+        metric_contract: dict[str, Any] | None,
+    ) -> bool:
+        if not self._retrieval_tools_available():
+            return False
+
+        if self._has_successful_evidence(trace):
+            return False
+
+        if self._answer_requests_user_provided_document(final_answer):
+            return True
+
+        # In this RAG agent, filing-specific narrative/metric answers must be grounded.
+        # If the model tries to answer from memory before any retrieval, force one retrieval attempt.
+        if narrative_required or metric_contract:
+            return True
+
+        if self._answer_has_financial_number(final_answer) and not self._has_citation_marker(final_answer):
+            return True
+
+        return False
+
+
+    @staticmethod
+    def _tool_output_is_error(tool_name: str, output: str) -> bool:
+        text = str(output or "").lstrip()
+        lowered = text.lower()
+
+        if lowered.startswith("sql error:"):
+            return True
+        if lowered.startswith("error:"):
+            return True
+        if lowered.startswith("calculation error:"):
+            return True
+        if lowered.startswith("error executing tool:"):
+            return True
+        if lowered.startswith("error describing table:"):
+            return True
+        if "binder error:" in lowered[:1200]:
+            return True
+        if "referenced column" in lowered[:1200] and "not found" in lowered[:1200]:
+            return True
+
+        return False
+
+    @classmethod
+    def _tool_output_has_evidence(cls, tool_name: str, output: str) -> bool:
+        text = str(output or "")
+        lowered = text.lower()
+
+        if not text.strip() or cls._tool_output_is_error(tool_name, text):
+            return False
+
+        if "query returned 0 rows" in lowered:
+            return False
+
+        if tool_name in {"search_text", "search_tables", "describe_table", "execute_sql"}:
+            return bool(
+                re.search(r"\[(?:C|T)\d+\s*\|", text)
+                or "Source: [" in text
+                or "| source=" in text
+                or "table=tbl_" in text
+            )
+
+        if tool_name == "calculate":
+            return bool(re.fullmatch(r"\s*-?\d+(?:\.\d+)?\s*", text))
+
+        if tool_name == "get_financial_formula":
+            return "Formula:" in text or "required components" in lowered
+
+        return False
+
+    @classmethod
+    def _has_successful_evidence(cls, trace: list[AgentToolTrace]) -> bool:
+        return any(
+            call.ok and cls._tool_output_has_evidence(call.name, call.result_preview)
+            for call in trace
+        )
+
+    @classmethod
+    def _successful_tool_history(cls, messages: list[dict[str, Any]]) -> str:
+        blocks: list[str] = []
+
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+
+            tool_name = str(message.get("name") or "")
+            content = str(message.get("content") or "")
+
+            if not cls._tool_output_has_evidence(tool_name, content):
+                continue
+
+            if len(content) > 5000:
+                content = content[:5000] + "\n[Successful tool output truncated for forced finalization]"
+
+            blocks.append(f"Tool {tool_name} returned successful evidence:\n{content}")
+
+        return "\n\n".join(blocks[-12:])
+
+    async def _force_final_answer_from_evidence(
+        self,
+        *,
+        question: str,
+        messages: list[dict[str, Any]],
+        metric_contract: dict[str, Any] | None,
+        narrative_required: bool,
+        reason: str,
+    ) -> str | None:
+        evidence_history = self._successful_tool_history(messages)
+        if not evidence_history.strip():
+            return None
+
+        prompt = build_forced_final_answer_prompt(
+            question=question,
+            reason=reason,
+            evidence_history=evidence_history,
+            metric_contract=compact_contract(metric_contract) if metric_contract else None,
+            narrative_required=narrative_required,
+        )
+
+        try:
+            response = await self.client.chat.completions.create(
+                **self._build_create_params(
+                    [
+                        {"role": self._instruction_role(), "content": BASE_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    tools=None,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Agent forced finalization failed: %s", exc)
+            return None
+
+        answer = response.choices[0].message.content or ""
+        answer = answer.strip()
+        return answer or None
 
     @staticmethod
     def _extract_sql_table_name(query: str | None) -> str | None:
@@ -468,7 +751,7 @@ class AgentRunner:
         path = Path(self.trace_path)
 
         def write_sync() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True) if path.parent != Path(".") else None
+            path.parent.mkdir(parents=True, exist_ok=True) if path.parent != Path("../../../../../Downloads") else None
             with path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
@@ -486,6 +769,9 @@ class AgentRunner:
         narrative_grounding_retries = 0
         self_eval_retries = 0
         last_metric_validation = None
+        unsupported_assumption_retries = 0
+        no_tool_retrieval_retries = 0
+        instruction_role = self._instruction_role()
 
         narrative_required = self._is_narrative_question(question)
 
@@ -493,8 +779,8 @@ class AgentRunner:
 
         messages: list[dict[str, Any]] = [
             {
-                "role": "system",
-                "content":BASE_SYSTEM_PROMPT,
+                "role": instruction_role,
+                "content": BASE_SYSTEM_PROMPT,
             }
         ]
 
@@ -502,7 +788,7 @@ class AgentRunner:
             logger.info("Agent metric contract detected: %s", metric_contract.get("metric_id"))
             messages.append(
                 {
-                    "role": "system",
+                    "role": instruction_role,
                     "content": render_contract_for_prompt(metric_contract),
                 }
             )
@@ -510,7 +796,7 @@ class AgentRunner:
         if narrative_required:
             messages.append(
                 {
-                    "role": "system",
+                    "role": instruction_role,
                     "content": build_narrative_system_prompt(
                                 question,
                                 self._build_narrative_search_guidance(question),
@@ -567,6 +853,45 @@ class AgentRunner:
 
             if not tool_calls:
                 final_answer = msg.content or "Done"
+
+                if (
+                    no_tool_retrieval_retries < self.MAX_NO_TOOL_RETRIEVAL_RETRIES
+                    and self._requires_retrieval_retry_before_final(
+                        final_answer=final_answer,
+                        trace=trace,
+                        narrative_required=narrative_required,
+                        metric_contract=metric_contract,
+                    )
+                ):
+                    no_tool_retrieval_retries += 1
+                    logger.warning(
+                        "Agent attempted to finalize without retrieval evidence; forcing retrieval retry."
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": build_no_tool_retrieval_retry_prompt(question),
+                        }
+                    )
+                    continue
+
+                if self._is_generic_failure_answer(final_answer) and self._has_successful_evidence(trace):
+                    repaired_answer = await self._force_final_answer_from_evidence(
+                        question=question,
+                        messages=messages,
+                        metric_contract=metric_contract,
+                        narrative_required=narrative_required,
+                        reason="model returned generic failure despite successful tool evidence",
+                    )
+                    if repaired_answer:
+                        logger.warning("Agent generic failure replaced by forced finalization from evidence.")
+                        final_answer = repaired_answer
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": final_answer,
+                            }
+                        )
 
                 should_self_eval = (
                     narrative_required
@@ -662,6 +987,20 @@ class AgentRunner:
                             }
                         )
                         continue
+
+                if (
+                    self._answer_has_unsupported_numeric_assumption(final_answer)
+                    and unsupported_assumption_retries < self.MAX_UNSUPPORTED_ASSUMPTION_RETRIES
+                ):
+                    unsupported_assumption_retries += 1
+                    logger.warning("Agent unsupported numeric assumption validation failed.")
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": build_unsupported_assumption_retry_prompt(),
+                        }
+                    )
+                    continue
 
                 citation_ok, citation_reason = self._validate_citations(
                     question=question,
@@ -783,8 +1122,12 @@ class AgentRunner:
                                         sample_rows=80,
                                     )
 
-                            consecutive_errors = 0
-                            ok = True
+                            if self._tool_output_is_error(func_name, str(tool_result)):
+                                consecutive_errors += 1
+                                ok = False
+                            else:
+                                consecutive_errors = 0
+                                ok = True
 
                 except Exception as exc:
                     logger.exception("Agent tool execution failed")
@@ -854,7 +1197,18 @@ class AgentRunner:
             },
         )
 
+        forced_answer = None
+        if self._has_successful_evidence(trace):
+            forced_answer = await self._force_final_answer_from_evidence(
+                question=question,
+                messages=messages,
+                metric_contract=metric_contract,
+                narrative_required=narrative_required,
+                reason="max tool turns reached despite successful tool evidence",
+            )
+
         return AgentAnswer(
-            answer="I could not produce an answer from the available evidence within the allowed steps.",
+            answer=forced_answer
+            or "I could not produce an answer from the available evidence within the allowed steps.",
             tool_calls=trace,
         )

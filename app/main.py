@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -35,7 +35,20 @@ from app.api.routes.router import api_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
+    thread_pool = ThreadPoolExecutor(
+        max_workers=settings.RAG_THREAD_POOL_WORKERS,
+        thread_name_prefix="fin-rag-worker",
+    )
+
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(thread_pool)
+
     async with AsyncExitStack() as stack:
+        async def shutdown_thread_pool() -> None:
+            thread_pool.shutdown(wait=True, cancel_futures=True)
+        stack.push_async_callback(shutdown_thread_pool)
+
         postgres_engine = build_postgres_engine()
         db_sessionmaker = build_sessionmaker(postgres_engine)
         uow_factory = lambda: SqlAlchemyUnitOfWork(db_sessionmaker)
@@ -105,6 +118,8 @@ async def lifespan(app: FastAPI):
         agent_use_case = build_agent_use_case(
             openai_client=openai_client,
             retrieval_use_case=retrieval_use_case,
+            uow_factory=uow_factory,
+            s3_repository=s3_repo,
         )
 
         ingestion_queue = IngestionQueue(
@@ -149,6 +164,7 @@ async def lifespan(app: FastAPI):
         app.state.retrieval_use_case = retrieval_use_case
         app.state.openai_client = openai_client
         app.state.agent_use_case = agent_use_case
+        app.state.ingest_use_case = ingest_use_case
 
         yield
 

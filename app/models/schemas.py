@@ -27,31 +27,6 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-# WORKSPACE SCHEMAS
-class WorkspaceCreate(BaseModel):
-    """Schema for creating a new workspace."""
-    name: str = Field(..., examples=["Alpha Investment Fund"])
-    ws_type: WorkspaceType = WorkspaceType.PRIVATE
-
-
-class WorkspaceResponse(BaseModel):
-    """Schema for returning workspace data."""
-    id: UUID
-    name: str
-    type: WorkspaceType
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# USER SCHEMAS
-class UserCreate(BaseModel):
-    """Schema for user registration."""
-    email: EmailStr
-    password: str = Field(..., min_length=8, examples=["strong_password_123"])
-    workspace_id: UUID
-
-
 class UserResponse(BaseModel):
     """Schema for returning user data (password is intentionally omitted)."""
     id: UUID
@@ -63,7 +38,6 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# DOCUMENT SCHEMAS
 class DocumentResponse(BaseModel):
     """Schema for returning document processing status."""
     id: UUID
@@ -76,23 +50,25 @@ class DocumentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# RAG SCHEMAS
-class Citation(BaseModel):
-    """Schema for a single citation grounding the LLM answer."""
-    doc_name: str
-    section: str
-    text: str
+class AgentCitationResponse(BaseModel):
+    marker: str
+    document_id: str
+    source_type: str
+    doc_name: str | None = None
+    filename: str | None = None
+    page_number: int | None = None
+    table_name: str | None = None
+    evidence_id: str | None = None
+    label: str | None = None
 
 
-class QueryRequest(BaseModel):
-    """Schema for the user's chat message to the RAG system."""
-    query: str = Field(..., examples=["What was the net income for 3M in Q3 2023?"])
-
-
-class QueryResponse(BaseModel):
-    """Schema for the RAG system's answer, including citations."""
-    answer: str
-    citations: List[Citation] = []
+class AgentSourceDocumentResponse(BaseModel):
+    document_id: str
+    filename: str
+    url: str
+    markers: list[str] = []
+    pages: list[int] = []
+    expires_in_seconds: int
 
 
 class AgentToolTraceResponse(BaseModel):
@@ -110,6 +86,8 @@ class RagAskRequest(BaseModel):
 class RagAskResponse(BaseModel):
     answer: str
     tool_calls: list[AgentToolTraceResponse] = []
+    citations: list[AgentCitationResponse] = []
+    source_documents: list[AgentSourceDocumentResponse] = []
 
 
 class SearchTextRequest(BaseModel):

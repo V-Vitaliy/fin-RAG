@@ -10,10 +10,17 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Financial RAG API"
     API_V1_STR: str = "/api/v1"
 
-    # JWT
+    # AUTH
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    AUTH_ENABLE_COMPANY_DOMAIN_WORKSPACES: bool = True
+
+    AUTH_PUBLIC_EMAIL_DOMAINS: str = (
+        "gmail.com,googlemail.com,outlook.com,hotmail.com,live.com,"
+        "yahoo.com,icloud.com,me.com,proton.me,protonmail.com,"
+        "aol.com,mail.com,yandex.com"
+    )
 
     #  Database Connections
     POSTGRES_URL: Optional[str] = None
@@ -21,6 +28,7 @@ class Settings(BaseSettings):
     #  Qdrant
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
+    QDRANT_TIMEOUT: float = 30.0
 
     # S3
     S3_BUCKET_NAME: Optional[str] = None
@@ -73,12 +81,14 @@ class Settings(BaseSettings):
     RAG_THREAD_POOL_WORKERS: int = 8
 
     # Agent
-    RAG_AGENT_MODEL: str = "gpt-4o-mini"
+    RAG_AGENT_MODEL: str = "gpt-5-mini"
+    RAG_AGENT_REASONING_EFFORT: str = "low"
     RAG_AGENT_MAX_TOOL_TURNS: int = 15
-    RAG_AGENT_MAX_TOKENS: int = 4096
+    RAG_AGENT_MAX_TOKENS: int = 1800
     RAG_AGENT_TEMPERATURE: float = 0.0
     RAG_AGENT_TRACE_PATH: str | None = "agent_traces.jsonl"
     RAG_AGENT_MAX_TOOL_OUTPUT_CHARS: int = 12000
+    RAG_CITATION_URL_EXPIRES_SECONDS: int = 600
 
     model_config = SettingsConfigDict(
         env_file=".env",

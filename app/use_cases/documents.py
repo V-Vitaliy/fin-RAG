@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+import asyncio
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
@@ -28,11 +29,18 @@ class DocumentUseCase:
         workspace_id: uuid.UUID,
         filename: str,
         file_obj: BinaryIO,
+        enqueue: bool = True,
     ) -> Document:
         document_id = uuid.uuid4()
         filename = self._normalize_filename(filename)
-        file_bytes = self._read_file_bytes(file_obj)
-        content_hash = hashlib.sha256(file_bytes).hexdigest()
+        file_bytes = await asyncio.to_thread(
+            self._read_file_bytes,
+            file_obj,
+        )
+
+        content_hash = await asyncio.to_thread(
+            lambda: hashlib.sha256(file_bytes).hexdigest()
+        )
 
         object_key = self._build_object_key(
             workspace_id=workspace_id,
@@ -70,9 +78,10 @@ class DocumentUseCase:
             status=DocumentStatus.PROCESSING,
         )
 
-        await self._ingestion_queue.enqueue(
-            IngestDocumentJob(document_id=document.id)
-        )
+        if enqueue:
+            await self._ingestion_queue.enqueue(
+                IngestDocumentJob(document_id=document.id)
+            )
 
         return document
 

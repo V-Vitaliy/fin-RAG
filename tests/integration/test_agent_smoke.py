@@ -241,8 +241,11 @@ def test_smoke_agent_ask_stream_sse(smoke_client_and_headers):
         raw = "".join(response.iter_text())
 
     assert "event: stage" in raw
+    assert "event: final_answer" in raw
     assert "event: done" in raw
-    assert "event: token" in raw
+    assert "event: token" not in raw
+    assert '"citations"' in raw
+    assert '"source_documents"' in raw
     assert "event: error" not in raw
     assert "No accessible ready documents found" not in raw
     assert "API Error" not in raw
